@@ -1,6 +1,9 @@
 package com.example.sqs.queue.domain
 
 import java.time.Instant
+import jakarta.validation.Valid
+import jakarta.validation.constraints.NotBlank
+import jakarta.validation.constraints.Pattern
 
 data class Queue(
     val tenantId: String,
@@ -38,7 +41,11 @@ data class RedrivePolicy(
 
 // DTO classes for API requests/responses
 data class CreateQueueRequest(
+    @field:NotBlank(message = "Queue name cannot be blank")
+    @field:Pattern(regexp = "^[a-zA-Z0-9_-]+$", message = "Queue name can only contain alphanumeric characters, hyphens, and underscores")
     val queueName: String,
+    
+    @field:Valid
     val attributes: QueueAttributes = QueueAttributes()
 )
 

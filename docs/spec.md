@@ -33,40 +33,40 @@ AWS SQS와 유사한 경량 메시지 큐 시스템 구현
 ## 주요 기능
 
 ### 큐 관리
-- [x] 큐 생성 (CreateQueue)
+- [] 큐 생성 (CreateQueue)
   - 큐 속성 설정 (VisibilityTimeout, MessageRetentionPeriod, DelaySeconds 등)
   - DLQ 설정
-- [x] 큐 삭제 (DeleteQueue)
+- [] 큐 삭제 (DeleteQueue)
   - 큐와 모든 메시지 완전 삭제
-- [x] 큐 목록 조회 (ListQueues)
+- [] 큐 목록 조회 (ListQueues)
   - 테넌트별 큐 목록
   - 페이징 지원 (limit, offset)
   - 큐 이름 패턴 필터링
-- [x] 큐 속성 조회 (GetQueueAttributes)
-- [x] 큐 속성 수정 (SetQueueAttributes)
+- [] 큐 속성 조회 (GetQueueAttributes)
+- [] 큐 속성 수정 (SetQueueAttributes)
 
 ### 메시지 관리
-- [x] 메시지 전송 (SendMessage)
+- [] 메시지 전송 (SendMessage)
   - 단일 메시지 전송
   - DelaySeconds 지원
   - 메시지 속성 (attributes) 지원
-- [x] 메시지 일괄 전송 (SendMessageBatch)
+- [] 메시지 일괄 전송 (SendMessageBatch)
   - 최대 10개 메시지 동시 전송
-- [x] 메시지 수신 (ReceiveMessage)
+- [] 메시지 수신 (ReceiveMessage)
   - Long Polling 지원
   - MaxNumberOfMessages (1-10개)
   - VisibilityTimeout 적용
-- [x] 메시지 삭제 (DeleteMessage)
+- [] 메시지 삭제 (DeleteMessage)
   - 처리 완료된 메시지 삭제
-- [x] 메시지 일괄 삭제 (DeleteMessageBatch)
+- [] 메시지 일괄 삭제 (DeleteMessageBatch)
 
 ### 모니터링 및 운영
-- [x] 큐 통계 조회
+- [] 큐 통계 조회
   - 대기 중인 메시지 수
   - 처리 중인 메시지 수 (invisible)
   - DLQ 메시지 수
-- [x] 메시지 내용 미리보기 (PeekMessage)
-- [x] 큐 퍼지 (PurgeQueue) - 모든 메시지 삭제
+- [] 메시지 내용 미리보기 (PeekMessage)
+- [] 큐 퍼지 (PurgeQueue) - 모든 메시지 삭제
 
 ## 기술 스택
 
