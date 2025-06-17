@@ -7,6 +7,7 @@ import com.example.sqs.admin.service.ActivityLogService
 import com.example.sqs.admin.service.AdminDashboardService
 import com.example.sqs.admin.service.AlertService
 import com.example.sqs.common.ApiResponse
+import com.example.sqs.common.exception.EntityNotFoundException
 import org.springframework.web.bind.annotation.*
 
 @RestController
@@ -49,8 +50,8 @@ class AdminDashboardController(
      */
     @GetMapping("/alerts/{alertId}")
     fun getAlert(@PathVariable alertId: String): ApiResponse<SystemAlert> {
-        val alert = alertService.getAlert(alertId)
-            ?: return ApiResponse.error("ALERT_NOT_FOUND", "알림을 찾을 수 없습니다")
+        val alert = alertService.getAlert(alertId) 
+            ?: throw EntityNotFoundException("알림을 찾을 수 없습니다", "ALERT_NOT_FOUND")
         return ApiResponse.success(alert)
     }
     
@@ -60,11 +61,7 @@ class AdminDashboardController(
     @PostMapping("/alerts/{alertId}/resolve")
     fun resolveAlert(@PathVariable alertId: String): ApiResponse<Boolean> {
         val resolved = alertService.resolveAlert(alertId)
-        return if (resolved) {
-            ApiResponse.success(true)
-        } else {
-            ApiResponse.error("RESOLVE_FAILED", "알림 해결 처리에 실패했습니다")
-        }
+        return ApiResponse.success(resolved)
     }
     
     /**

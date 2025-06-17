@@ -66,6 +66,7 @@ class AlertService {
      */
     fun resolveAlert(alertId: String): Boolean {
         // Mock 구현 - 실제로는 DB에서 상태를 업데이트합니다
+        val alert = getAlert(alertId) ?: throw com.example.sqs.common.exception.EntityNotFoundException("알림을 찾을 수 없습니다", "ALERT_NOT_FOUND")
         println("Alert resolved: $alertId")
         return true
     }
