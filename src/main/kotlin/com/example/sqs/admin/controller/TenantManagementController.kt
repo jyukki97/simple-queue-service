@@ -126,12 +126,8 @@ class TenantManagementController(
     suspend fun suspendTenant(
         @PathVariable tenantId: String
     ): ApiResponse<Unit> {
-        try {
-            tenantManagementService.suspendTenant(tenantId)
-            return ApiResponse.success(Unit)
-        } catch (e: IllegalArgumentException) {
-            return ApiResponse.error("TENANT_NOT_FOUND", e.message ?: "테넌트를 찾을 수 없습니다.")
-        }
+        tenantManagementService.suspendTenant(tenantId)
+        return ApiResponse.success(Unit)
     }
     
     /**
@@ -141,11 +137,7 @@ class TenantManagementController(
     suspend fun activateTenant(
         @PathVariable tenantId: String
     ): ApiResponse<Unit> {
-        try {
-            tenantManagementService.activateTenant(tenantId)
-            return ApiResponse.success(Unit)
-        } catch (e: IllegalArgumentException) {
-            return ApiResponse.error("TENANT_NOT_FOUND", e.message ?: "테넌트를 찾을 수 없습니다.")
-        }
+        tenantManagementService.activateTenant(tenantId)
+        return ApiResponse.success(Unit)
     }
 }

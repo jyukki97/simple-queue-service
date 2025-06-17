@@ -1,8 +1,7 @@
 package com.example.sqs.queue.controller
 
 import com.example.sqs.common.domain.ApiResponse
-import com.example.sqs.common.domain.ErrorCode
-import com.example.sqs.common.exception.QueueNotFoundException
+import com.example.sqs.common.exception.*
 import com.example.sqs.queue.domain.CreateQueueRequest
 import com.example.sqs.queue.domain.UpdateQueueRequest
 import com.example.sqs.queue.domain.Queue
@@ -30,17 +29,17 @@ class QueueController(
     ): Mono<ApiResponse<Queue>> {
         logger.info("Received create queue request for: ${request.queueName}")
         return tenantService.getTenantId(apiKey)
+            .switchIfEmpty(Mono.error(AuthenticationException("Invalid API key")))
             .flatMap { tenantId ->
                 queueService.createQueue(tenantId, request.queueName, request.attributes)
                     .map { queue -> ApiResponse.success(queue) }
-                    .onErrorResume { e ->
+                    .onErrorMap { e ->
                         when (e) {
-                            is IllegalArgumentException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_ALREADY_EXISTS.name, e.message ?: "Queue creation failed"))
-                            else -> Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "Queue creation failed"))
+                            is IllegalArgumentException -> DuplicateResourceException(e.message ?: "Queue already exists")
+                            else -> OperationFailedException(e.message ?: "Queue creation failed")
                         }
                     }
             }
-            .switchIfEmpty(Mono.just(ApiResponse.error(ErrorCode.UNAUTHORIZED.name, ErrorCode.UNAUTHORIZED.message)))
     }
 
     @DeleteMapping("/{queueName}")
@@ -50,20 +49,18 @@ class QueueController(
     ): Mono<ApiResponse<String>> {
         logger.info("큐 삭제 요청: $queueName")
         return tenantService.getTenantId(apiKey)
+            .switchIfEmpty(Mono.error(AuthenticationException("Invalid API key")))
             .flatMap { tenantId ->
-                logger.info("테넌트 확인: $tenantId")
                 queueService.deleteQueue(tenantId, queueName)
                     .then(Mono.just(ApiResponse.success("큐가 성공적으로 삭제되었습니다: $queueName")))
-                    .onErrorResume { e ->
-                        logger.error("큐 삭제 중 오류 발생", e)
+                    .onErrorMap { e ->
                         when (e) {
-                            is QueueNotFoundException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다"))
-                            is IllegalArgumentException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐 삭제 실패"))
-                            else -> Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "큐 삭제 실패"))
+                            is QueueNotFoundException -> e
+                            is IllegalArgumentException -> QueueNotFoundException(e.message ?: "큐를 찾을 수 없습니다")
+                            else -> OperationFailedException(e.message ?: "큐 삭제 실패")
                         }
                     }
             }
-            .switchIfEmpty(Mono.just(ApiResponse.error(ErrorCode.UNAUTHORIZED.name, ErrorCode.UNAUTHORIZED.message)))
     }
 
     @GetMapping
@@ -75,20 +72,13 @@ class QueueController(
     ): Mono<ApiResponse<List<Queue>>> {
         logger.info("큐 목록 조회 요청 - limit: $limit, offset: $offset, pattern: $namePattern")
         return tenantService.getTenantId(apiKey)
+            .switchIfEmpty(Mono.error(AuthenticationException("Invalid API key")))
             .flatMap { tenantId ->
-                logger.info("테넌트 확인: $tenantId")
                 queueService.listQueues(tenantId, limit, offset, namePattern)
                     .collectList()
-                    .map { queues ->
-                        logger.info("조회된 큐 개수: ${queues.size}")
-                        ApiResponse.success(queues)
-                    }
-                    .onErrorResume { e ->
-                        logger.error("큐 목록 조회 중 오류 발생", e)
-                        Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "큐 목록 조회 실패"))
-                    }
+                    .map { queues -> ApiResponse.success(queues) }
+                    .onErrorMap { e -> OperationFailedException(e.message ?: "큐 목록 조회 실패") }
             }
-            .switchIfEmpty(Mono.just(ApiResponse.error(ErrorCode.UNAUTHORIZED.name, ErrorCode.UNAUTHORIZED.message)))
     }
 
     @GetMapping("/{queueName}/attributes")
@@ -98,23 +88,18 @@ class QueueController(
     ): Mono<ApiResponse<Queue>> {
         logger.info("큐 속성 조회 요청: $queueName")
         return tenantService.getTenantId(apiKey)
+            .switchIfEmpty(Mono.error(AuthenticationException("Invalid API key")))
             .flatMap { tenantId ->
-                logger.info("테넌트 확인: $tenantId")
-                queueService.findQueue(tenantId, queueName)
-                    .map { queue ->
-                        logger.info("큐 속성 조회 성공: ${queue.queueName}")
-                        ApiResponse.success(queue)
-                    }
-                    .onErrorResume { e ->
-                        logger.error("큐 속성 조회 중 오류 발생", e)
+                queueService.getQueue(tenantId, queueName)
+                    .map { queue -> ApiResponse.success(queue) }
+                    .onErrorMap { e ->
                         when (e) {
-                            is QueueNotFoundException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다"))
-                            is IllegalArgumentException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다"))
-                            else -> Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "큐 속성 조회 실패"))
+                            is QueueNotFoundException -> e
+                            is IllegalArgumentException -> QueueNotFoundException(e.message ?: "큐를 찾을 수 없습니다")
+                            else -> OperationFailedException(e.message ?: "큐 속성 조회 실패")
                         }
                     }
             }
-            .switchIfEmpty(Mono.just(ApiResponse.error(ErrorCode.UNAUTHORIZED.name, ErrorCode.UNAUTHORIZED.message)))
     }
 
     @PutMapping("/{queueName}/attributes")
@@ -125,48 +110,38 @@ class QueueController(
     ): Mono<ApiResponse<Queue>> {
         logger.info("큐 속성 수정 요청: $queueName")
         return tenantService.getTenantId(apiKey)
+            .switchIfEmpty(Mono.error(AuthenticationException("Invalid API key")))
             .flatMap { tenantId ->
-                logger.info("테넌트 확인: $tenantId")
-                queueService.updateQueueAttributes(tenantId, queueName, request.attributes)
-                    .map { queue ->
-                        logger.info("큐 속성 수정 성공: ${queue.queueName}")
-                        ApiResponse.success(queue)
-                    }
-                    .onErrorResume { e ->
-                        logger.error("큐 속성 수정 중 오류 발생", e)
+                queueService.updateQueue(tenantId, queueName, request.attributes)
+                    .map { queue -> ApiResponse.success(queue) }
+                    .onErrorMap { e ->
                         when (e) {
-                            is QueueNotFoundException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다"))
-                            is IllegalArgumentException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다"))
-                            else -> Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "큐 속성 수정 실패"))
+                            is QueueNotFoundException -> e
+                            is IllegalArgumentException -> QueueNotFoundException(e.message ?: "큐를 찾을 수 없습니다")
+                            else -> OperationFailedException(e.message ?: "큐 속성 수정 실패")
                         }
                     }
             }
-            .switchIfEmpty(Mono.just(ApiResponse.error(ErrorCode.UNAUTHORIZED.name, ErrorCode.UNAUTHORIZED.message)))
     }
-    
-    @GetMapping("/{queueName}/statistics")
-    fun getQueueStatistics(
+
+    @GetMapping("/{queueName}/stats")
+    fun getQueueStats(
         @RequestHeader("X-API-Key") apiKey: String,
         @PathVariable queueName: String
     ): Mono<ApiResponse<QueueStatistics>> {
         logger.info("큐 통계 조회 요청: $queueName")
         return tenantService.getTenantId(apiKey)
+            .switchIfEmpty(Mono.error(AuthenticationException("Invalid API key")))
             .flatMap { tenantId ->
-                logger.info("테넌트 확인: $tenantId")
                 queueService.getQueueStatistics(tenantId, queueName)
-                    .map { statistics ->
-                        logger.info("큐 통계 조회 성공: ${statistics.queueName}")
-                        ApiResponse.success(statistics)
-                    }
-                    .onErrorResume { e ->
-                        logger.error("큐 통계 조회 중 오류 발생", e)
+                    .map { stats -> ApiResponse.success(stats) }
+                    .onErrorMap { e ->
                         when (e) {
-                            is QueueNotFoundException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다"))
-                            is IllegalArgumentException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다"))
-                            else -> Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "큐 통계 조회 실패"))
+                            is QueueNotFoundException -> e
+                            is IllegalArgumentException -> QueueNotFoundException(e.message ?: "큐를 찾을 수 없습니다")
+                            else -> OperationFailedException(e.message ?: "큐 통계 조회 실패")
                         }
                     }
             }
-            .switchIfEmpty(Mono.just(ApiResponse.error(ErrorCode.UNAUTHORIZED.name, ErrorCode.UNAUTHORIZED.message)))
     }
 }

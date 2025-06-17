@@ -47,3 +47,43 @@ class QuotaExceededException(
     override val message: String,
     val code: String = "QUOTA_EXCEEDED"
 ) : RuntimeException(message)
+
+/**
+ * 큐를 찾을 수 없는 예외
+ */
+class QueueNotFoundException(
+    override val message: String,
+    val code: String = "QUEUE_NOT_FOUND"
+) : RuntimeException(message)
+
+/**
+ * 메시지를 찾을 수 없는 예외
+ */
+class MessageNotFoundException(
+    override val message: String,
+    val code: String = "MESSAGE_NOT_FOUND"
+) : RuntimeException(message)
+
+/**
+ * 잘못된 Receipt Handle 예외
+ */
+class InvalidReceiptHandleException(
+    override val message: String,
+    val code: String = "INVALID_RECEIPT_HANDLE"
+) : RuntimeException(message)
+
+/**
+ * 메시지 크기 초과 예외
+ */
+class MessageTooLargeException(
+    override val message: String,
+    val code: String = "MESSAGE_TOO_LARGE"
+) : RuntimeException(message)
+
+/**
+ * 파라미터 검증 실패 예외
+ */
+class ValidationException(
+    override val message: String,
+    val code: String = "VALIDATION_FAILED"
+) : RuntimeException(message)

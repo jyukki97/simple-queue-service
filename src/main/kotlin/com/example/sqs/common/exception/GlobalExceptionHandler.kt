@@ -35,6 +35,69 @@ class GlobalExceptionHandler {
         return ApiResponse.error(ex.code, ex.message ?: "Operation failed")
     }
 
+    @ExceptionHandler(AuthenticationException::class)
+    @ResponseStatus(HttpStatus.UNAUTHORIZED)
+    fun handleAuthenticationException(ex: AuthenticationException): ApiResponse<Nothing> {
+        log.error("Authentication failed: {}", ex.message)
+        return ApiResponse.error(ex.code, ex.message ?: "Authentication failed")
+    }
+
+    @ExceptionHandler(AccessDeniedException::class)
+    @ResponseStatus(HttpStatus.FORBIDDEN)
+    fun handleAccessDeniedException(ex: AccessDeniedException): ApiResponse<Nothing> {
+        log.error("Access denied: {}", ex.message)
+        return ApiResponse.error(ex.code, ex.message ?: "Access denied")
+    }
+
+    @ExceptionHandler(DuplicateResourceException::class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    fun handleDuplicateResourceException(ex: DuplicateResourceException): ApiResponse<Nothing> {
+        log.error("Duplicate resource: {}", ex.message)
+        return ApiResponse.error(ex.code, ex.message ?: "Resource already exists")
+    }
+
+    @ExceptionHandler(QuotaExceededException::class)
+    @ResponseStatus(HttpStatus.TOO_MANY_REQUESTS)
+    fun handleQuotaExceededException(ex: QuotaExceededException): ApiResponse<Nothing> {
+        log.error("Quota exceeded: {}", ex.message)
+        return ApiResponse.error(ex.code, ex.message ?: "Quota exceeded")
+    }
+
+    @ExceptionHandler(QueueNotFoundException::class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    fun handleQueueNotFoundException(ex: QueueNotFoundException): ApiResponse<Nothing> {
+        log.error("Queue not found: {}", ex.message)
+        return ApiResponse.error(ex.code, ex.message ?: "Queue not found")
+    }
+
+    @ExceptionHandler(MessageNotFoundException::class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    fun handleMessageNotFoundException(ex: MessageNotFoundException): ApiResponse<Nothing> {
+        log.error("Message not found: {}", ex.message)
+        return ApiResponse.error(ex.code, ex.message ?: "Message not found")
+    }
+
+    @ExceptionHandler(InvalidReceiptHandleException::class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    fun handleInvalidReceiptHandleException(ex: InvalidReceiptHandleException): ApiResponse<Nothing> {
+        log.error("Invalid receipt handle: {}", ex.message)
+        return ApiResponse.error(ex.code, ex.message ?: "Invalid receipt handle")
+    }
+
+    @ExceptionHandler(MessageTooLargeException::class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    fun handleMessageTooLargeException(ex: MessageTooLargeException): ApiResponse<Nothing> {
+        log.error("Message too large: {}", ex.message)
+        return ApiResponse.error(ex.code, ex.message ?: "Message size exceeds limit")
+    }
+
+    @ExceptionHandler(ValidationException::class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    fun handleValidationException(ex: ValidationException): ApiResponse<Nothing> {
+        log.error("Validation failed: {}", ex.message)
+        return ApiResponse.error(ex.code, ex.message ?: "Validation failed")
+    }
+
     @ExceptionHandler(Exception::class)
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     fun handleGenericException(ex: Exception): ApiResponse<Nothing> {

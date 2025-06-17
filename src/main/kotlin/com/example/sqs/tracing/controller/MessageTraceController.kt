@@ -1,7 +1,7 @@
 package com.example.sqs.tracing.controller
 
 import com.example.sqs.common.domain.ApiResponse
-import com.example.sqs.common.domain.ErrorCode
+import com.example.sqs.common.exception.*
 import com.example.sqs.tracing.domain.MessageTrace
 import com.example.sqs.tracing.domain.TraceStatistics
 import com.example.sqs.tracing.service.MessageTraceService
