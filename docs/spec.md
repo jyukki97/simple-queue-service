@@ -61,12 +61,69 @@ AWS SQS와 유사한 경량 메시지 큐 시스템 구현
 - [x] 메시지 일괄 삭제 (DeleteMessageBatch)
 
 ### 모니터링 및 운영
-- [] 큐 통계 조회
-  - 대기 중인 메시지 수
-  - 처리 중인 메시지 수 (invisible)
-  - DLQ 메시지 수
-- [] 메시지 내용 미리보기 (PeekMessage)
 - [x] 큐 퍼지 (PurgeQueue) - 모든 메시지 삭제
+- [x] 큐 통계 조회 (GetQueueStats)
+  - 대기 중인 메시지 수 (ApproximateNumberOfMessages)
+  - 처리 중인 메시지 수 (ApproximateNumberOfMessagesNotVisible)
+  - DLQ 메시지 수 (ApproximateNumberOfMessagesInDLQ)
+  - 가장 오래된 메시지 나이 (ApproximateAgeOfOldestMessage)
+- [x] 메시지 내용 미리보기 (PeekMessage)
+  - 큐에서 메시지를 제거하지 않고 내용만 조회
+  - 최대 10개 메시지 미리보기
+  - 메시지 순서 보장
+
+### 고급 기능 (Advanced Features)
+- [] 메시지 필터링 (Message Filtering)
+  - 메시지 속성 기반 필터링
+  - SQL-like 필터 문법 지원
+  - 구독자별 독립적인 필터 설정
+- [] 스케줄링 작업 (Scheduled Tasks)
+  - 자동 DLQ 이동 (Dead Letter Queue Transfer)
+  - 만료 메시지 정리 (Expired Message Cleanup)
+  - 가시성 타임아웃 복원 (Visibility Timeout Recovery)
+- [] 실시간 메트릭 (Real-time Metrics)
+  - 시간별/일별 메시지 처리량 통계
+  - 에러율 및 지연 시간 모니터링
+  - Prometheus 메트릭 내보내기
+- [] 알림 시스템 (Notification System)
+  - 큐 크기 임계값 알림
+  - DLQ 메시지 누적 알림
+  - 시스템 에러 알림
+  - Webhook 지원
+
+### 보안 및 인증 강화
+- [] JWT 기반 인증
+  - 시간 제한 토큰
+  - 역할 기반 접근 제어 (RBAC)
+  - 토큰 갱신 메커니즘
+- [] 메시지 암호화
+  - AES-256 메시지 내용 암호화
+  - 테넌트별 암호화 키 관리
+  - 투명한 암복호화
+
+### 성능 최적화
+- [] 큐 파티셔닝 (Queue Partitioning)
+  - 높은 처리량을 위한 큐 분할
+  - 라운드 로빈 메시지 분산
+  - 파티션별 독립적인 처리
+- [] 메시지 압축 (Message Compression)
+  - GZIP 압축으로 저장 공간 절약
+  - 자동 압축/해제
+  - 압축률 통계 제공
+- [] 캐시 최적화
+  - 큐 메타데이터 캐싱
+  - 빈번한 조회 데이터 캐싱
+  - Redis 메모리 사용량 최적화
+
+### 관리자 기능
+- [] 관리자 대시보드
+  - 전체 시스템 상태 모니터링
+  - 테넌트별 사용량 통계
+  - 실시간 큐 상태 시각화
+- [] 테넌트 관리
+  - 테넌트 생성/수정/삭제
+  - 사용량 제한 설정 (Rate Limiting)
+  - 저장 공간 할당량 관리
 
 ## 기술 스택
 

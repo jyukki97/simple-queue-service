@@ -2,6 +2,7 @@ package com.example.sqs.message.controller
 
 import com.example.sqs.common.domain.ApiResponse
 import com.example.sqs.common.domain.ErrorCode
+import com.example.sqs.message.domain.MessagePreview
 import com.example.sqs.message.domain.SendMessageRequest
 import com.example.sqs.message.domain.SendMessageResponse
 import com.example.sqs.message.domain.SendMessageBatchRequest
@@ -210,6 +211,39 @@ class MessageController(
                                 }
                             )
                             else -> Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "메시지 일괄 삭제 실패"))
+                        }
+                    }
+            }
+            .switchIfEmpty(Mono.just(ApiResponse.error(ErrorCode.UNAUTHORIZED.name, ErrorCode.UNAUTHORIZED.message)))
+    }
+
+    @GetMapping("/peek")
+    fun peekMessages(
+        @RequestHeader("X-API-Key") apiKey: String,
+        @PathVariable queueName: String,
+        @RequestParam(defaultValue = "10") maxMessages: Int
+    ): Mono<ApiResponse<List<MessagePreview>>> {
+        logger.info("메시지 미리보기 요청: queue=$queueName, maxMessages=$maxMessages")
+        return tenantService.getTenantId(apiKey)
+            .flatMap { tenantId ->
+                logger.info("테넌트 확인: $tenantId")
+                messageService.peekMessages(tenantId, queueName, maxMessages)
+                    .collectList()
+                    .map { messages ->
+                        logger.info("메시지 미리보기 완료: queue=$queueName, count=${messages.size}")
+                        ApiResponse.success(messages)
+                    }
+                    .onErrorResume { e ->
+                        logger.error("메시지 미리보기 중 오류 발생", e)
+                        when (e) {
+                            is IllegalArgumentException -> Mono.just(
+                                if (e.message?.contains("큐") == true) {
+                                    ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다")
+                                } else {
+                                    ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, e.message ?: "잘못된 파라미터입니다")
+                                }
+                            )
+                            else -> Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "메시지 미리보기 실패"))
                         }
                     }
             }

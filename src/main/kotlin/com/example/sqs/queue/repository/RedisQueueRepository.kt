@@ -1,6 +1,7 @@
 package com.example.sqs.queue.repository
 
 import com.example.sqs.queue.domain.Queue
+import com.example.sqs.queue.domain.QueueStatistics
 import com.example.sqs.queue.domain.QueueStatsResponse
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.springframework.data.redis.core.ReactiveRedisTemplate
@@ -118,6 +119,66 @@ class RedisQueueRepository(
                     deadLetterMessages = 0 // TODO: DLQ 구현 후 추가
                 )
             }
+    }
+    
+    override fun getQueueStatistics(queue: Queue): Mono<QueueStatistics> {
+        val messagesKey = queue.getMessagesKey()
+        val delayedKey = queue.getDelayedKey()
+        val inFlightKey = queue.getInFlightKey()
+        
+        // 각 큐별 메시지 수 조회
+        val availableMessagesMono = redisTemplate.opsForList().size(messagesKey).defaultIfEmpty(0L)
+        val delayedMessagesMono = redisTemplate.opsForZSet().count(delayedKey, 
+            org.springframework.data.domain.Range.closed(Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY))
+            .defaultIfEmpty(0L)
+        val inFlightMessagesMono = redisTemplate.opsForZSet().count(inFlightKey, 
+            org.springframework.data.domain.Range.closed(Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY))
+            .defaultIfEmpty(0L)
+            
+        // 가장 오래된 메시지 조회 (available 큐에서 첫 번째 메시지)
+        val oldestMessageMono = redisTemplate.opsForList().index(messagesKey, 0)
+            .cast(String::class.java)
+            .flatMap { messageId ->
+                // 메시지 상세 정보에서 전송 시간 조회
+                redisTemplate.opsForHash<String, Any>().get("message:$messageId", "sentTimestamp")
+                    .cast(String::class.java)
+                    .map { sentTimestamp ->
+                        val sentTime = Instant.parse(sentTimestamp)
+                        val ageSeconds = Instant.now().epochSecond - sentTime.epochSecond
+                        ageSeconds
+                    }
+            }
+            .switchIfEmpty(Mono.empty())
+        
+        return Mono.zip(
+            availableMessagesMono, 
+            delayedMessagesMono, 
+            inFlightMessagesMono
+        ).flatMap { tuple ->
+            oldestMessageMono
+                .map { age ->
+                    QueueStatistics(
+                        queueName = queue.queueName,
+                        approximateNumberOfMessages = tuple.t1,
+                        approximateNumberOfMessagesNotVisible = tuple.t3,
+                        approximateNumberOfMessagesInDLQ = 0L, // TODO: DLQ 구현 후 추가
+                        approximateAgeOfOldestMessage = age,
+                        lastUpdated = Instant.now()
+                    )
+                }
+                .switchIfEmpty(
+                    Mono.just(
+                        QueueStatistics(
+                            queueName = queue.queueName,
+                            approximateNumberOfMessages = tuple.t1,
+                            approximateNumberOfMessagesNotVisible = tuple.t3,
+                            approximateNumberOfMessagesInDLQ = 0L, // TODO: DLQ 구현 후 추가
+                            approximateAgeOfOldestMessage = null,
+                            lastUpdated = Instant.now()
+                        )
+                    )
+                )
+        }
     }
     
     override fun purgeAllMessages(queue: Queue): Mono<Void> {

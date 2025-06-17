@@ -87,3 +87,22 @@ export interface DeleteMessageBatchResponse {
   successful: string[];
   failed: BatchMessageFailure[];
 }
+
+export interface QueueStatistics {
+  queueName: string;
+  approximateNumberOfMessages: number;
+  approximateNumberOfMessagesNotVisible: number;
+  approximateNumberOfMessagesInDLQ: number;
+  approximateAgeOfOldestMessage: number | null;
+  lastUpdated: number;
+}
+
+export interface MessagePreview {
+  messageId: string;
+  messageBody: string;
+  attributes: { [key: string]: string };
+  sentTimestamp: number;
+  firstReceiveTimestamp?: number;
+  receiveCount: number;
+  approximateFirstReceiveTimestamp?: number;
+}

@@ -5,6 +5,7 @@ import com.example.sqs.common.domain.ErrorCode
 import com.example.sqs.queue.domain.CreateQueueRequest
 import com.example.sqs.queue.domain.UpdateQueueRequest
 import com.example.sqs.queue.domain.Queue
+import com.example.sqs.queue.domain.QueueStatistics
 import com.example.sqs.queue.service.QueueService
 import com.example.sqs.tenant.service.TenantService
 import org.springframework.http.HttpStatus
@@ -133,6 +134,31 @@ class QueueController(
                         when (e) {
                             is IllegalArgumentException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다"))
                             else -> Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "큐 속성 수정 실패"))
+                        }
+                    }
+            }
+            .switchIfEmpty(Mono.just(ApiResponse.error(ErrorCode.UNAUTHORIZED.name, ErrorCode.UNAUTHORIZED.message)))
+    }
+    
+    @GetMapping("/{queueName}/statistics")
+    fun getQueueStatistics(
+        @RequestHeader("X-API-Key") apiKey: String,
+        @PathVariable queueName: String
+    ): Mono<ApiResponse<QueueStatistics>> {
+        logger.info("큐 통계 조회 요청: $queueName")
+        return tenantService.getTenantId(apiKey)
+            .flatMap { tenantId ->
+                logger.info("테넌트 확인: $tenantId")
+                queueService.getQueueStatistics(tenantId, queueName)
+                    .map { statistics ->
+                        logger.info("큐 통계 조회 성공: ${statistics.queueName}")
+                        ApiResponse.success(statistics)
+                    }
+                    .onErrorResume { e ->
+                        logger.error("큐 통계 조회 중 오류 발생", e)
+                        when (e) {
+                            is IllegalArgumentException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다"))
+                            else -> Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "큐 통계 조회 실패"))
                         }
                     }
             }

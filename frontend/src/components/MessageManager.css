@@ -98,7 +98,6 @@
 
 /* 메시지 목록 */
 .messages-section h4 {
-  margin: 0 0 1rem 0;
   color: #495057;
   font-size: 1.1rem;
 }
@@ -271,4 +270,30 @@
 
 .checkbox-item input[type="checkbox"] {
   width: auto;
+}
+
+/* 미리보기 메시지 스타일 */
+.preview-item {
+  border-left: 4px solid #17a2b8;
+  background-color: #f1f9fa;
+}
+
+.preview-item .message-header {
+  background-color: rgba(23, 162, 184, 0.1);
+}
+
+.btn-info {
+  background-color: #17a2b8;
+  border-color: #17a2b8;
+  color: white;
+}
+
+.btn-info:hover {
+  background-color: #138496;
+  border-color: #117a8b;
+}
+
+.btn-info:disabled {
+  background-color: #6c757d;
+  border-color: #6c757d;
 }

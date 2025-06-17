@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Queue } from '../types/sqs';
+import { Queue, QueueStatistics } from '../types/sqs';
 import { sqsApi } from '../services/sqsApi';
 import './QueueManager.css';
 
@@ -13,6 +13,8 @@ const QueueManager: React.FC<QueueManagerProps> = ({ onQueueSelect, selectedQueu
   const [loading, setLoading] = useState(false);
   const [newQueueName, setNewQueueName] = useState('');
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [queueStats, setQueueStats] = useState<{ [queueName: string]: QueueStatistics }>({});
+  const [statsLoading, setStatsLoading] = useState<{ [queueName: string]: boolean }>({});
 
   const loadQueues = async () => {
     setLoading(true);
@@ -77,6 +79,22 @@ const QueueManager: React.FC<QueueManagerProps> = ({ onQueueSelect, selectedQueu
       }
     } catch (error) {
       setMessage({ type: 'error', text: '큐 삭제 중 오류가 발생했습니다' });
+    }
+  };
+
+  const loadQueueStatistics = async (queueName: string) => {
+    setStatsLoading(prev => ({ ...prev, [queueName]: true }));
+    try {
+      const response = await sqsApi.getQueueStatistics(queueName);
+      if (response.success && response.data) {
+        setQueueStats(prev => ({ ...prev, [queueName]: response.data! }));
+      } else {
+        setMessage({ type: 'error', text: response.error?.message || '큐 통계 조회 실패' });
+      }
+    } catch (error) {
+      setMessage({ type: 'error', text: '큐 통계 조회 중 오류가 발생했습니다' });
+    } finally {
+      setStatsLoading(prev => ({ ...prev, [queueName]: false }));
     }
   };
 
@@ -147,8 +165,29 @@ const QueueManager: React.FC<QueueManagerProps> = ({ onQueueSelect, selectedQueu
                     가시성 타임아웃: {queue.attributes.visibilityTimeoutSeconds}초 |
                     최대 수신 횟수: {queue.attributes.maxReceiveCount}
                   </div>
+                  {queueStats[queue.queueName] && (
+                    <div style={{ fontSize: '0.8rem', color: '#28a745', marginTop: '0.25rem' }}>
+                      📊 대기: {queueStats[queue.queueName].approximateNumberOfMessages} | 
+                      처리중: {queueStats[queue.queueName].approximateNumberOfMessagesNotVisible} |
+                      DLQ: {queueStats[queue.queueName].approximateNumberOfMessagesInDLQ}
+                      {queueStats[queue.queueName].approximateAgeOfOldestMessage && (
+                        <span> | 최오래: {queueStats[queue.queueName].approximateAgeOfOldestMessage}초</span>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="queue-actions">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      loadQueueStatistics(queue.queueName);
+                    }}
+                    disabled={statsLoading[queue.queueName]}
+                    className="btn btn-secondary btn-sm"
+                    style={{ marginRight: '0.25rem' }}
+                  >
+                    {statsLoading[queue.queueName] ? '⏳' : '📊'}
+                  </button>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();

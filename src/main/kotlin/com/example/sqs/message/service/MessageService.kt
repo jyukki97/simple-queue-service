@@ -1,6 +1,7 @@
 package com.example.sqs.message.service
 
 import com.example.sqs.message.domain.Message
+import com.example.sqs.message.domain.MessagePreview
 import com.example.sqs.message.domain.SendMessageRequest
 import com.example.sqs.message.domain.SendMessageResponse
 import com.example.sqs.message.domain.ReceiveMessageRequest
@@ -189,6 +190,18 @@ class MessageService(
                             failed = failed
                         )
                     }
+            }
+    }
+
+    /**
+     * 큐에서 메시지를 제거하지 않고 내용만 미리보기합니다
+     */
+    fun peekMessages(tenantId: String, queueName: String, maxMessages: Int = 10): Flux<MessagePreview> {
+        val validMaxMessages = maxMessages.coerceIn(1, 10)
+        
+        return queueService.findQueue(tenantId, queueName)
+            .flatMapMany { queue ->
+                messageRepository.peekMessages(queue, validMaxMessages)
             }
     }
 }

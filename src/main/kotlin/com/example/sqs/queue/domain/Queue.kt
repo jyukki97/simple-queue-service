@@ -11,6 +11,7 @@ data class Queue(
 ) {
     fun getQueueKey(): String = "queue:${tenantId}:${queueName}"
     fun getMessagesKey(): String = "queue:messages:${tenantId}:${queueName}"
+    fun getAvailableKey(): String = "queue:messages:${tenantId}:${queueName}" // available messages queue
     fun getDelayedKey(): String = "queue:delayed:${tenantId}:${queueName}"
     fun getInFlightKey(): String = "queue:inflight:${tenantId}:${queueName}"
 }

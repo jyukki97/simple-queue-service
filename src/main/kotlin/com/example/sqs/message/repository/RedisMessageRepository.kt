@@ -1,6 +1,7 @@
 package com.example.sqs.message.repository
 
 import com.example.sqs.message.domain.Message
+import com.example.sqs.message.domain.MessagePreview
 import com.example.sqs.queue.domain.Queue
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
@@ -165,5 +166,21 @@ class RedisMessageRepository(
                     .remove(queue.getInFlightKey(), value)
             }
             .then()
+    }
+
+    override fun peekMessages(queue: Queue, maxMessages: Int): Flux<MessagePreview> {
+        logger.info("메시지 미리보기 시작: queue=${queue.queueName}, maxMessages=$maxMessages")
+        
+        // available 큐에서 메시지 ID들을 가져와서 (제거하지 않고) 내용을 조회
+        return redisTemplate.opsForList()
+            .range(queue.getAvailableKey(), 0, (maxMessages - 1).toLong())
+            .flatMap { messageId ->
+                getMessageDetails(messageId)
+                    .map { message -> MessagePreview.fromMessage(message) }
+                    .onErrorContinue { error, _ ->
+                        logger.warn("메시지 미리보기 중 오류 발생: messageId=$messageId", error)
+                    }
+            }
+            .doOnComplete { logger.info("메시지 미리보기 완료: queue=${queue.queueName}") }
     }
 }

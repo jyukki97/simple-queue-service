@@ -1,6 +1,7 @@
 package com.example.sqs.message.repository
 
 import com.example.sqs.message.domain.Message
+import com.example.sqs.message.domain.MessagePreview
 import com.example.sqs.queue.domain.Queue
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
@@ -40,4 +41,12 @@ interface MessageRepository {
      * 지연된 메시지들 중 실행 시간이 된 것들을 available 상태로 이동합니다
      */
     fun moveDelayedToAvailable(queue: Queue): Mono<Long>
+    
+    /**
+     * 큐에서 메시지를 제거하지 않고 내용만 미리보기합니다
+     * @param queue 대상 큐
+     * @param maxMessages 최대 미리보기할 메시지 개수 (기본 10개)
+     * @return 미리보기 메시지 목록
+     */
+    fun peekMessages(queue: Queue, maxMessages: Int = 10): Flux<MessagePreview>
 }

@@ -10,6 +10,8 @@ import {
   MessageResponse,
   DeleteMessageBatchRequest,
   DeleteMessageBatchResponse,
+  QueueStatistics,
+  MessagePreview,
 } from '../types/sqs';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080';
@@ -82,6 +84,21 @@ export const sqsApi = {
 
   purgeQueue: async (queueName: string): Promise<ApiResponse<string>> => {
     const response = await api.delete(`/api/v1/queues/${queueName}/messages`);
+    return response.data;
+  },
+
+  getQueueStatistics: async (queueName: string): Promise<ApiResponse<QueueStatistics>> => {
+    const response = await api.get(`/api/v1/queues/${queueName}/statistics`);
+    return response.data;
+  },
+
+  peekMessages: async (
+    queueName: string,
+    maxMessages: number = 10
+  ): Promise<ApiResponse<MessagePreview[]>> => {
+    const response = await api.get(`/api/v1/queues/${queueName}/messages/peek`, {
+      params: { maxMessages },
+    });
     return response.data;
   },
 };

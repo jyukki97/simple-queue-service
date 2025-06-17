@@ -1,6 +1,7 @@
 package com.example.sqs.queue.repository
 
 import com.example.sqs.queue.domain.Queue
+import com.example.sqs.queue.domain.QueueStatistics
 import com.example.sqs.queue.domain.QueueStatsResponse
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
@@ -12,5 +13,6 @@ interface QueueRepository {
     fun findByTenantId(tenantId: String, limit: Int, offset: Int, namePattern: String?): Flux<Queue>
     fun delete(queue: Queue): Mono<Void>
     fun getQueueStats(queue: Queue): Mono<QueueStatsResponse>
+    fun getQueueStatistics(queue: Queue): Mono<QueueStatistics>
     fun purgeAllMessages(queue: Queue): Mono<Void>
 }

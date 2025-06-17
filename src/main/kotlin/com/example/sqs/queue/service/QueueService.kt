@@ -2,6 +2,7 @@ package com.example.sqs.queue.service
 
 import com.example.sqs.queue.domain.Queue
 import com.example.sqs.queue.domain.QueueAttributes
+import com.example.sqs.queue.domain.QueueStatistics
 import com.example.sqs.queue.domain.QueueStatsResponse
 import com.example.sqs.queue.repository.QueueRepository
 import org.springframework.stereotype.Service
@@ -53,6 +54,13 @@ class QueueService(
         return findQueue(tenantId, queueName)
             .flatMap { queue ->
                 queueRepository.getQueueStats(queue)
+            }
+    }
+    
+    fun getQueueStatistics(tenantId: String, queueName: String): Mono<QueueStatistics> {
+        return findQueue(tenantId, queueName)
+            .flatMap { queue ->
+                queueRepository.getQueueStatistics(queue)
             }
     }
     

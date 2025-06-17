@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { MessageResponse, BatchMessageRequest } from '../types/sqs';
+import { MessageResponse, BatchMessageRequest, MessagePreview } from '../types/sqs';
 import { sqsApi } from '../services/sqsApi';
 import './MessageManager.css';
 
@@ -9,7 +9,9 @@ interface MessageManagerProps {
 
 const MessageManager: React.FC<MessageManagerProps> = ({ queueName }) => {
   const [messages, setMessages] = useState<MessageResponse[]>([]);
+  const [previews, setPreviews] = useState<MessagePreview[]>([]);
   const [loading, setLoading] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [selectedMessages, setSelectedMessages] = useState<string[]>([]);
 
@@ -39,6 +41,23 @@ const MessageManager: React.FC<MessageManagerProps> = ({ queueName }) => {
       setMessage({ type: 'error', text: '메시지 수신 중 오류가 발생했습니다' });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const peekMessages = async () => {
+    setPreviewLoading(true);
+    try {
+      const response = await sqsApi.peekMessages(queueName, 10);
+      if (response.success && response.data) {
+        setPreviews(response.data);
+        setMessage({ type: 'success', text: `${response.data.length}개의 메시지를 미리보기했습니다` });
+      } else {
+        setMessage({ type: 'error', text: response.error?.message || '메시지 미리보기 실패' });
+      }
+    } catch (error) {
+      setMessage({ type: 'error', text: '메시지 미리보기 중 오류가 발생했습니다' });
+    } finally {
+      setPreviewLoading(false);
     }
   };
 
@@ -279,6 +298,13 @@ const MessageManager: React.FC<MessageManagerProps> = ({ queueName }) => {
             >
               {loading ? '수신중...' : '메시지 수신'}
             </button>
+            <button
+              onClick={peekMessages}
+              disabled={previewLoading}
+              className="btn btn-info"
+            >
+              {previewLoading ? '미리보기중...' : '메시지 미리보기'}
+            </button>
             <button onClick={deleteSelectedMessages} className="btn btn-warning">
               선택 삭제
             </button>
@@ -332,6 +358,54 @@ const MessageManager: React.FC<MessageManagerProps> = ({ queueName }) => {
                 
                 <div className="message-meta">
                   <span>전송 시간: {new Date(msg.sentTimestamp).toLocaleString()}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 메시지 미리보기 */}
+      <div className="messages-section">
+        <div className="form-row">
+          <h4>메시지 미리보기 (큐에서 제거되지 않음)</h4>
+        </div>
+
+        {previews.length === 0 ? (
+          <div className="empty-state">미리보기할 메시지가 없습니다.</div>
+        ) : (
+          <div>
+            {previews.map((msg, index) => (
+              <div key={msg.messageId} className="message-item preview-item">
+                <div className="message-header">
+                  <div className="checkbox-item">
+                    <span className="message-id">ID: {msg.messageId}</span>
+                  </div>
+                  <div className="message-info">
+                    <span>수신 횟수: {msg.receiveCount}</span>
+                  </div>
+                </div>
+                <div className="message-content">
+                  <div>
+                    <strong>내용:</strong>
+                    <div className="message-body">{msg.messageBody}</div>
+                  </div>
+                  
+                  {Object.keys(msg.attributes).length > 0 && (
+                    <div>
+                      <strong>속성:</strong>
+                      <div className="message-body" style={{ marginTop: '0.25rem' }}>
+                        {JSON.stringify(msg.attributes, null, 2)}
+                      </div>
+                    </div>
+                  )}
+                  
+                  <div className="message-meta">
+                    <span>전송 시간: {new Date(msg.sentTimestamp).toLocaleString()}</span>
+                    {msg.firstReceiveTimestamp && (
+                      <span>첫 수신 시간: {new Date(msg.firstReceiveTimestamp).toLocaleString()}</span>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
