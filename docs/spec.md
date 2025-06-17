@@ -1,6 +1,5 @@
 # Simple Queue Service
-AWS SQS와 유사한 경량 메시지 큐- [x] 큐 속성 조회 (GetQueueAttributes)
-- [x] 큐 속성 수정 (SetQueueAttributes)스템 구현
+AWS SQS와 유사한 경량 메시지 큐 시스템 구현
 
 ## 프로젝트 개요
 분산 애플리케이션 간 비동기 메시지 통신을 위한 경량 큐 서비스입니다. AWS SQS의 핵심 기능들을 참고하여 구현하되, 사이드 프로젝트에 적합한 수준으로 단순화했습니다.
@@ -43,23 +42,23 @@ AWS SQS와 유사한 경량 메시지 큐- [x] 큐 속성 조회 (GetQueueAttrib
   - 테넌트별 큐 목록
   - 페이징 지원 (limit, offset)
   - 큐 이름 패턴 필터링
-- [] 큐 속성 조회 (GetQueueAttributes)
-- [] 큐 속성 수정 (SetQueueAttributes)
+- [x] 큐 속성 조회 (GetQueueAttributes)
+- [x] 큐 속성 수정 (SetQueueAttributes)
 
 ### 메시지 관리
-- [] 메시지 전송 (SendMessage)
+- [x] 메시지 전송 (SendMessage)
   - 단일 메시지 전송
   - DelaySeconds 지원
   - 메시지 속성 (attributes) 지원
-- [] 메시지 일괄 전송 (SendMessageBatch)
+- [x] 메시지 일괄 전송 (SendMessageBatch)
   - 최대 10개 메시지 동시 전송
-- [] 메시지 수신 (ReceiveMessage)
+- [x] 메시지 수신 (ReceiveMessage)
   - Long Polling 지원
   - MaxNumberOfMessages (1-10개)
   - VisibilityTimeout 적용
-- [] 메시지 삭제 (DeleteMessage)
+- [x] 메시지 삭제 (DeleteMessage)
   - 처리 완료된 메시지 삭제
-- [] 메시지 일괄 삭제 (DeleteMessageBatch)
+- [x] 메시지 일괄 삭제 (DeleteMessageBatch)
 
 ### 모니터링 및 운영
 - [] 큐 통계 조회
@@ -67,7 +66,7 @@ AWS SQS와 유사한 경량 메시지 큐- [x] 큐 속성 조회 (GetQueueAttrib
   - 처리 중인 메시지 수 (invisible)
   - DLQ 메시지 수
 - [] 메시지 내용 미리보기 (PeekMessage)
-- [] 큐 퍼지 (PurgeQueue) - 모든 메시지 삭제
+- [x] 큐 퍼지 (PurgeQueue) - 모든 메시지 삭제
 
 ## 기술 스택
 
