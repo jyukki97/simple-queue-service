@@ -20,7 +20,7 @@ class QueueManagementIntegrationTest(
 
     @Test
     fun `큐 생성-조회-삭제 전체 플로우 테스트`() {
-        val queueName = "full-flow-test-queue"
+        val queueName = "full-flow-test-queue-${System.currentTimeMillis()}"
         val request = CreateQueueRequest(
             queueName = queueName,
             attributes = QueueAttributes(

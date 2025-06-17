@@ -1,5 +1,6 @@
 package com.example.sqs.queue.service
 
+import com.example.sqs.common.exception.QueueNotFoundException
 import com.example.sqs.queue.domain.Queue
 import com.example.sqs.queue.domain.QueueAttributes
 import com.example.sqs.queue.domain.QueueStatistics
@@ -43,7 +44,7 @@ class QueueService(
     
     fun findQueue(tenantId: String, queueName: String): Mono<Queue> {
         return queueRepository.findByTenantIdAndQueueName(tenantId, queueName)
-            .switchIfEmpty(Mono.error(IllegalArgumentException("Queue not found: $queueName")))
+            .switchIfEmpty(Mono.error(QueueNotFoundException(queueName)))
     }
     
     fun listQueues(tenantId: String, limit: Int, offset: Int, namePattern: String?): Flux<Queue> {

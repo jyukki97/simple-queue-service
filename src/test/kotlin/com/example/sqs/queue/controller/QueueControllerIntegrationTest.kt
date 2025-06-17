@@ -18,8 +18,9 @@ class QueueControllerIntegrationTest(
 
     @Test
     fun `큐 생성 API 테스트`() {
+        val uniqueQueueName = "test-queue-${System.currentTimeMillis()}"
         val request = CreateQueueRequest(
-            queueName = "test-queue",
+            queueName = uniqueQueueName,
             attributes = QueueAttributes(
                 visibilityTimeoutSeconds = 30,
                 messageRetentionPeriod = 1209600,
@@ -37,7 +38,7 @@ class QueueControllerIntegrationTest(
             .expectStatus().isCreated
             .expectBody()
             .jsonPath("$.success").isEqualTo(true)
-            .jsonPath("$.data.queueName").isEqualTo("test-queue")
+            .jsonPath("$.data.queueName").isEqualTo(uniqueQueueName)
             .jsonPath("$.data.tenantId").isEqualTo("tenant-1")
     }
 

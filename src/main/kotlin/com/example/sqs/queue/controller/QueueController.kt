@@ -2,6 +2,7 @@ package com.example.sqs.queue.controller
 
 import com.example.sqs.common.domain.ApiResponse
 import com.example.sqs.common.domain.ErrorCode
+import com.example.sqs.common.exception.QueueNotFoundException
 import com.example.sqs.queue.domain.CreateQueueRequest
 import com.example.sqs.queue.domain.UpdateQueueRequest
 import com.example.sqs.queue.domain.Queue
@@ -56,6 +57,7 @@ class QueueController(
                     .onErrorResume { e ->
                         logger.error("큐 삭제 중 오류 발생", e)
                         when (e) {
+                            is QueueNotFoundException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다"))
                             is IllegalArgumentException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐 삭제 실패"))
                             else -> Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "큐 삭제 실패"))
                         }
@@ -106,6 +108,7 @@ class QueueController(
                     .onErrorResume { e ->
                         logger.error("큐 속성 조회 중 오류 발생", e)
                         when (e) {
+                            is QueueNotFoundException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다"))
                             is IllegalArgumentException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다"))
                             else -> Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "큐 속성 조회 실패"))
                         }
@@ -132,6 +135,7 @@ class QueueController(
                     .onErrorResume { e ->
                         logger.error("큐 속성 수정 중 오류 발생", e)
                         when (e) {
+                            is QueueNotFoundException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다"))
                             is IllegalArgumentException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다"))
                             else -> Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "큐 속성 수정 실패"))
                         }
@@ -157,6 +161,7 @@ class QueueController(
                     .onErrorResume { e ->
                         logger.error("큐 통계 조회 중 오류 발생", e)
                         when (e) {
+                            is QueueNotFoundException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다"))
                             is IllegalArgumentException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다"))
                             else -> Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "큐 통계 조회 실패"))
                         }

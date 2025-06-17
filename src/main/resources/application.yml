@@ -9,10 +9,11 @@ spring:
     timeout: 2000ms
     lettuce:
       pool:
-        max-active: 10
-        max-idle: 5
-        min-idle: 1
-        max-wait: -1ms
+        max-active: 20
+        max-idle: 8
+        min-idle: 2
+        max-wait: 1000ms
+      shutdown-timeout: 100ms
   
   jackson:
     property-naming-strategy: SNAKE_CASE
@@ -38,6 +39,22 @@ app:
     scheduler-interval: 30000  # 30초
     default-message-retention-period: 1209600  # 14일
     max-receive-count: 3
+    # 성능 최적화 설정
+    enable-compression: true
+    compression-threshold: 1024  # 1KB 이상 메시지 압축
+    partition-count: 4
+    enable-partitioning: true
+  
+  # Redis 성능 최적화 설정
+  redis:
+    performance:
+      io-thread-pool-size: 4
+      computation-thread-pool-size: 4
+      command-timeout-ms: 5000
+      enable-pipelining: true
+      pipeline-buffer-size: 1000
+      max-pool-size: 20
+      min-idle-size: 5
 
 logging:
   level:

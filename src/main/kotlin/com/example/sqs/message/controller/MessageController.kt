@@ -2,6 +2,7 @@ package com.example.sqs.message.controller
 
 import com.example.sqs.common.domain.ApiResponse
 import com.example.sqs.common.domain.ErrorCode
+import com.example.sqs.common.exception.QueueNotFoundException
 import com.example.sqs.message.domain.MessagePreview
 import com.example.sqs.message.domain.SendMessageRequest
 import com.example.sqs.message.domain.SendMessageResponse
@@ -236,12 +237,11 @@ class MessageController(
                     .onErrorResume { e ->
                         logger.error("메시지 미리보기 중 오류 발생", e)
                         when (e) {
+                            is QueueNotFoundException -> Mono.just(
+                                ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다")
+                            )
                             is IllegalArgumentException -> Mono.just(
-                                if (e.message?.contains("큐") == true) {
-                                    ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다")
-                                } else {
-                                    ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, e.message ?: "잘못된 파라미터입니다")
-                                }
+                                ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, e.message ?: "잘못된 파라미터입니다")
                             )
                             else -> Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "메시지 미리보기 실패"))
                         }

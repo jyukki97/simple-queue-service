@@ -2,6 +2,7 @@ package com.example.sqs.common.controller
 
 import com.example.sqs.common.domain.ApiResponse
 import com.example.sqs.common.domain.ErrorCode
+import com.example.sqs.common.exception.QueueNotFoundException
 import org.springframework.http.HttpStatus
 import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.ExceptionHandler
@@ -37,5 +38,11 @@ class GlobalExceptionHandler {
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     fun handleGenericException(ex: Exception): ApiResponse<Nothing> {
         return ApiResponse.error(ErrorCode.INTERNAL_ERROR.name, "Internal server error: ${ex.message}")
+    }
+
+    @ExceptionHandler(QueueNotFoundException::class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    fun handleQueueNotFoundException(ex: QueueNotFoundException): ApiResponse<Nothing> {
+        return ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, ex.message ?: "Queue not found")
     }
 }
