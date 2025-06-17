@@ -1,5 +1,6 @@
 # Simple Queue Service
-AWS SQS와 유사한 경량 메시지 큐 시스템 구현
+AWS SQS와 유사한 경량 메시지 큐- [x] 큐 속성 조회 (GetQueueAttributes)
+- [x] 큐 속성 수정 (SetQueueAttributes)스템 구현
 
 ## 프로젝트 개요
 분산 애플리케이션 간 비동기 메시지 통신을 위한 경량 큐 서비스입니다. AWS SQS의 핵심 기능들을 참고하여 구현하되, 사이드 프로젝트에 적합한 수준으로 단순화했습니다.

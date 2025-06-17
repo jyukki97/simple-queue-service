@@ -2,6 +2,8 @@ package com.example.sqs.queue.controller
 
 import com.example.sqs.queue.domain.CreateQueueRequest
 import com.example.sqs.queue.domain.QueueAttributes
+import com.example.sqs.queue.domain.UpdateQueueRequest
+import com.example.sqs.common.domain.ApiResponse
 import org.junit.jupiter.api.Test
 import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient
 import org.springframework.boot.test.context.SpringBootTest
@@ -142,5 +144,77 @@ class QueueManagementIntegrationTest(
         } catch (e: IllegalArgumentException) {
             assert(e.message?.contains("영숫자") == true)
         }
+    }
+
+    @Test
+    fun `큐 속성 수정 테스트`() {
+        val testQueueName = "update-test-queue"
+        val apiKey = "test-api-key"
+        
+        // 1. 큐 생성
+        val createRequest = CreateQueueRequest(
+            queueName = testQueueName,
+            attributes = QueueAttributes(
+                visibilityTimeoutSeconds = 30,
+                messageRetentionPeriod = 1209600,
+                delaySeconds = 0,
+                maxReceiveCount = 3
+            )
+        )
+        
+        val createResponse = webTestClient.post()
+            .uri("/api/v1/queues")
+            .header("X-API-Key", apiKey)
+            .bodyValue(createRequest)
+            .exchange()
+            .expectStatus().isCreated
+            .expectBody(ApiResponse::class.java)
+            .returnResult()
+            .responseBody
+        
+        assert(createResponse!!.success)
+        
+        // 2. 큐 속성 수정
+        val updateRequest = UpdateQueueRequest(
+            attributes = QueueAttributes(
+                visibilityTimeoutSeconds = 60,  // 30 → 60
+                messageRetentionPeriod = 604800, // 1209600 → 604800 (7일)
+                delaySeconds = 10,               // 0 → 10
+                maxReceiveCount = 5              // 3 → 5
+            )
+        )
+        
+        val updateResponse = webTestClient.put()
+            .uri("/api/v1/queues/$testQueueName/attributes")
+            .header("X-API-Key", apiKey)
+            .bodyValue(updateRequest)
+            .exchange()
+            .expectStatus().isOk
+            .expectBody(ApiResponse::class.java)
+            .returnResult()
+            .responseBody
+        
+        assert(updateResponse!!.success)
+        
+        // 3. 속성 조회로 변경 확인
+        val getResponse = webTestClient.get()
+            .uri("/api/v1/queues/$testQueueName/attributes")
+            .header("X-API-Key", apiKey)
+            .exchange()
+            .expectStatus().isOk
+            .expectBody(ApiResponse::class.java)
+            .returnResult()
+            .responseBody
+        
+        assert(getResponse!!.success)
+        
+        // 4. 정리
+        webTestClient.delete()
+            .uri("/api/v1/queues/$testQueueName")
+            .header("X-API-Key", apiKey)
+            .exchange()
+            .expectStatus().isOk
+            
+        println("✅ 큐 속성 수정 테스트 통과")
     }
 }

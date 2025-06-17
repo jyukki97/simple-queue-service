@@ -3,13 +3,13 @@ package com.example.sqs.queue.controller
 import com.example.sqs.common.domain.ApiResponse
 import com.example.sqs.common.domain.ErrorCode
 import com.example.sqs.queue.domain.CreateQueueRequest
+import com.example.sqs.queue.domain.UpdateQueueRequest
 import com.example.sqs.queue.domain.Queue
 import com.example.sqs.queue.service.QueueService
 import com.example.sqs.tenant.service.TenantService
 import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.*
 import reactor.core.publisher.Mono
-import jakarta.validation.Valid
 import org.slf4j.LoggerFactory
 
 @RestController
@@ -19,7 +19,7 @@ class QueueController(
     private val tenantService: TenantService
 ) {
     private val logger = LoggerFactory.getLogger(QueueController::class.java)
-    
+
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     fun createQueue(
@@ -40,7 +40,7 @@ class QueueController(
             }
             .switchIfEmpty(Mono.just(ApiResponse.error(ErrorCode.UNAUTHORIZED.name, ErrorCode.UNAUTHORIZED.message)))
     }
-    
+
     @DeleteMapping("/{queueName}")
     fun deleteQueue(
         @RequestHeader("X-API-Key") apiKey: String,
@@ -62,7 +62,7 @@ class QueueController(
             }
             .switchIfEmpty(Mono.just(ApiResponse.error(ErrorCode.UNAUTHORIZED.name, ErrorCode.UNAUTHORIZED.message)))
     }
-    
+
     @GetMapping
     fun listQueues(
         @RequestHeader("X-API-Key") apiKey: String,
@@ -76,13 +76,64 @@ class QueueController(
                 logger.info("테넌트 확인: $tenantId")
                 queueService.listQueues(tenantId, limit, offset, namePattern)
                     .collectList()
-                    .map { queues -> 
+                    .map { queues ->
                         logger.info("조회된 큐 개수: ${queues.size}")
-                        ApiResponse.success(queues) 
+                        ApiResponse.success(queues)
                     }
                     .onErrorResume { e ->
                         logger.error("큐 목록 조회 중 오류 발생", e)
                         Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "큐 목록 조회 실패"))
+                    }
+            }
+            .switchIfEmpty(Mono.just(ApiResponse.error(ErrorCode.UNAUTHORIZED.name, ErrorCode.UNAUTHORIZED.message)))
+    }
+
+    @GetMapping("/{queueName}/attributes")
+    fun getQueueAttributes(
+        @RequestHeader("X-API-Key") apiKey: String,
+        @PathVariable queueName: String
+    ): Mono<ApiResponse<Queue>> {
+        logger.info("큐 속성 조회 요청: $queueName")
+        return tenantService.getTenantId(apiKey)
+            .flatMap { tenantId ->
+                logger.info("테넌트 확인: $tenantId")
+                queueService.findQueue(tenantId, queueName)
+                    .map { queue ->
+                        logger.info("큐 속성 조회 성공: ${queue.queueName}")
+                        ApiResponse.success(queue)
+                    }
+                    .onErrorResume { e ->
+                        logger.error("큐 속성 조회 중 오류 발생", e)
+                        when (e) {
+                            is IllegalArgumentException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다"))
+                            else -> Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "큐 속성 조회 실패"))
+                        }
+                    }
+            }
+            .switchIfEmpty(Mono.just(ApiResponse.error(ErrorCode.UNAUTHORIZED.name, ErrorCode.UNAUTHORIZED.message)))
+    }
+
+    @PutMapping("/{queueName}/attributes")
+    fun setQueueAttributes(
+        @RequestHeader("X-API-Key") apiKey: String,
+        @PathVariable queueName: String,
+        @RequestBody request: UpdateQueueRequest
+    ): Mono<ApiResponse<Queue>> {
+        logger.info("큐 속성 수정 요청: $queueName")
+        return tenantService.getTenantId(apiKey)
+            .flatMap { tenantId ->
+                logger.info("테넌트 확인: $tenantId")
+                queueService.updateQueueAttributes(tenantId, queueName, request.attributes)
+                    .map { queue ->
+                        logger.info("큐 속성 수정 성공: ${queue.queueName}")
+                        ApiResponse.success(queue)
+                    }
+                    .onErrorResume { e ->
+                        logger.error("큐 속성 수정 중 오류 발생", e)
+                        when (e) {
+                            is IllegalArgumentException -> Mono.just(ApiResponse.error(ErrorCode.QUEUE_NOT_FOUND.name, e.message ?: "큐를 찾을 수 없습니다"))
+                            else -> Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "큐 속성 수정 실패"))
+                        }
                     }
             }
             .switchIfEmpty(Mono.just(ApiResponse.error(ErrorCode.UNAUTHORIZED.name, ErrorCode.UNAUTHORIZED.message)))

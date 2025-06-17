@@ -47,6 +47,10 @@ data class CreateQueueRequest(
     }
 }
 
+data class UpdateQueueRequest(
+    val attributes: QueueAttributes
+)
+
 data class ListQueuesRequest(
     val limit: Int = 20,
     val offset: Int = 0,
