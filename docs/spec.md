@@ -33,7 +33,7 @@ AWS SQS와 유사한 경량 메시지 큐 시스템 구현
 ## 주요 기능
 
 ### 큐 관리
-- [] 큐 생성 (CreateQueue)
+- [x] 큐 생성 (CreateQueue)
   - 큐 속성 설정 (VisibilityTimeout, MessageRetentionPeriod, DelaySeconds 등)
   - DLQ 설정
 - [] 큐 삭제 (DeleteQueue)

@@ -4,9 +4,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
-import org.springframework.data.redis.connection.RedisConnectionFactory
-import org.springframework.data.redis.core.RedisTemplate
+import org.springframework.data.redis.connection.ReactiveRedisConnectionFactory
+import org.springframework.data.redis.core.ReactiveRedisTemplate
 import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer
+import org.springframework.data.redis.serializer.RedisSerializationContext
 import org.springframework.data.redis.serializer.StringRedisSerializer
 import org.springframework.stereotype.Component
 
@@ -15,15 +16,18 @@ import org.springframework.stereotype.Component
 class RedisConfig {
     
     @Bean
-    fun redisTemplate(connectionFactory: RedisConnectionFactory): RedisTemplate<String, Any> {
-        return RedisTemplate<String, Any>().apply {
-            setConnectionFactory(connectionFactory)
-            keySerializer = StringRedisSerializer()
-            hashKeySerializer = StringRedisSerializer()
-            valueSerializer = GenericJackson2JsonRedisSerializer()
-            hashValueSerializer = GenericJackson2JsonRedisSerializer()
-            afterPropertiesSet()
-        }
+    fun reactiveRedisTemplate(
+        connectionFactory: ReactiveRedisConnectionFactory
+    ): ReactiveRedisTemplate<String, Any> {
+        val serializationContext = RedisSerializationContext
+            .newSerializationContext<String, Any>(StringRedisSerializer())
+            .key(StringRedisSerializer())
+            .value(GenericJackson2JsonRedisSerializer())
+            .hashKey(StringRedisSerializer())
+            .hashValue(GenericJackson2JsonRedisSerializer())
+            .build()
+            
+        return ReactiveRedisTemplate(connectionFactory, serializationContext)
     }
 }
 

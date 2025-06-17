@@ -1,9 +1,6 @@
 package com.example.sqs.queue.domain
 
 import java.time.Instant
-import jakarta.validation.Valid
-import jakarta.validation.constraints.NotBlank
-import jakarta.validation.constraints.Pattern
 
 data class Queue(
     val tenantId: String,
@@ -25,14 +22,7 @@ data class QueueAttributes(
     val maxReceiveCount: Int = 3,
     val deadLetterTargetArn: String? = null,
     val redrivePolicy: RedrivePolicy? = null
-) {
-    init {
-        require(visibilityTimeoutSeconds in 0..43200) { "Visibility timeout must be between 0 and 43200 seconds" }
-        require(messageRetentionPeriod in 60..1209600) { "Message retention period must be between 60 and 1209600 seconds" }
-        require(delaySeconds in 0..900) { "Delay seconds must be between 0 and 900 seconds" }
-        require(maxReceiveCount in 1..1000) { "Max receive count must be between 1 and 1000" }
-    }
-}
+)
 
 data class RedrivePolicy(
     val deadLetterTargetArn: String,
@@ -41,11 +31,7 @@ data class RedrivePolicy(
 
 // DTO classes for API requests/responses
 data class CreateQueueRequest(
-    @field:NotBlank(message = "Queue name cannot be blank")
-    @field:Pattern(regexp = "^[a-zA-Z0-9_-]+$", message = "Queue name can only contain alphanumeric characters, hyphens, and underscores")
     val queueName: String,
-    
-    @field:Valid
     val attributes: QueueAttributes = QueueAttributes()
 )
 

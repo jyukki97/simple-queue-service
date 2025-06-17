@@ -2,6 +2,7 @@ package com.example.sqs.tenant.repository
 
 import com.example.sqs.tenant.domain.Tenant
 import org.springframework.stereotype.Repository
+import reactor.core.publisher.Mono
 
 @Repository
 class InMemoryTenantRepository : TenantRepository {
@@ -20,16 +21,16 @@ class InMemoryTenantRepository : TenantRepository {
         tenants[defaultTenant.apiKey] = defaultTenant
     }
     
-    override fun findByApiKey(apiKey: String): Tenant? {
-        return tenants[apiKey]
+    override fun findByApiKey(apiKey: String): Mono<Tenant> {
+        return Mono.justOrEmpty(tenants[apiKey])
     }
     
-    override fun save(tenant: Tenant): Tenant {
+    override fun save(tenant: Tenant): Mono<Tenant> {
         tenants[tenant.apiKey] = tenant
-        return tenant
+        return Mono.just(tenant)
     }
     
-    override fun existsByApiKey(apiKey: String): Boolean {
-        return tenants.containsKey(apiKey)
+    override fun existsByApiKey(apiKey: String): Mono<Boolean> {
+        return Mono.just(tenants.containsKey(apiKey))
     }
 }
