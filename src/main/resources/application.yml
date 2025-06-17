@@ -1,0 +1,47 @@
+spring:
+  application:
+    name: simple-queue-service
+  
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+    password: ${REDIS_PASSWORD:}
+    timeout: 2000ms
+    lettuce:
+      pool:
+        max-active: 10
+        max-idle: 5
+        min-idle: 1
+        max-wait: -1ms
+  
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    default-property-inclusion: NON_NULL
+
+server:
+  port: ${SERVER_PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+
+app:
+  queue:
+    default-visibility-timeout: 30
+    max-message-size: 262144  # 256KB
+    max-messages-per-batch: 10
+    scheduler-interval: 30000  # 30초
+    default-message-retention-period: 1209600  # 14일
+    max-receive-count: 3
+
+logging:
+  level:
+    com.example.sqs: DEBUG
+    org.springframework.data.redis: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

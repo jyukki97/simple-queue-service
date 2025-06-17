@@ -1,0 +1,19 @@
+spring:
+  redis:
+    host: localhost
+    port: 6379
+    timeout: 1000ms
+    
+app:
+  queue:
+    default-visibility-timeout: 30
+    max-message-size: 262144
+    max-messages-per-batch: 10
+    scheduler-interval: 5000  # 테스트에서는 5초로 단축
+    default-message-retention-period: 3600  # 테스트에서는 1시간
+    max-receive-count: 3
+
+logging:
+  level:
+    com.example.sqs: DEBUG
+    org.springframework.data.redis: WARN
