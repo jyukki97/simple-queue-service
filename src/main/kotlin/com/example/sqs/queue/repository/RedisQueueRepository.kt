@@ -79,6 +79,26 @@ class RedisQueueRepository(
             }
     }
     
+    override fun findAllQueues(): Flux<Queue> {
+        // 모든 테넌트의 큐를 찾기 위해 "tenant:queues:*" 패턴으로 검색
+        return redisTemplate.keys("tenant:queues:*")
+            .flatMap { tenantQueuesKey ->
+                // tenant:queues:tenant-1 형식에서 tenant-1을 추출
+                val tenantId = tenantQueuesKey.substringAfterLast(":")
+                
+                redisTemplate.opsForSet()
+                    .members(tenantQueuesKey)
+                    .cast(String::class.java)
+                    .flatMap { queueName ->
+                        findByTenantIdAndQueueName(tenantId, queueName)
+                            .onErrorContinue { error, _ ->
+                                // logger 대신 println 사용 (임시)
+                                println("큐 로드 실패: tenantId=$tenantId, queueName=$queueName, error=$error")
+                            }
+                    }
+            }
+    }
+    
     override fun delete(queue: Queue): Mono<Void> {
         val key = "queue:${queue.tenantId}:${queue.queueName}"
         val tenantQueuesKey = "tenant:queues:${queue.tenantId}"

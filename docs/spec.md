@@ -77,7 +77,7 @@ AWS SQS와 유사한 경량 메시지 큐 시스템 구현
   - 메시지 속성 기반 필터링
   - SQL-like 필터 문법 지원
   - 구독자별 독립적인 필터 설정
-- [] 스케줄링 작업 (Scheduled Tasks)
+- [x] 스케줄링 작업 (Scheduled Tasks)
   - 자동 DLQ 이동 (Dead Letter Queue Transfer)
   - 만료 메시지 정리 (Expired Message Cleanup)
   - 가시성 타임아웃 복원 (Visibility Timeout Recovery)
