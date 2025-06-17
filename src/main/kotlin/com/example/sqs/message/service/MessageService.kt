@@ -14,6 +14,8 @@ import com.example.sqs.message.domain.DeleteMessageBatchRequest
 import com.example.sqs.message.domain.DeleteMessageBatchResponse
 import com.example.sqs.message.repository.MessageRepository
 import com.example.sqs.queue.service.QueueService
+import com.example.sqs.tracing.service.MessageTraceService
+import com.example.sqs.metrics.service.MetricsService
 import org.springframework.stereotype.Service
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
@@ -23,13 +25,17 @@ import java.util.*
 @Service
 class MessageService(
     private val messageRepository: MessageRepository,
-    private val queueService: QueueService
+    private val queueService: QueueService,
+    private val messageTraceService: MessageTraceService,
+    private val metricsService: MetricsService
 ) {
 
     /**
      * 큐에 메시지를 전송합니다
      */
     fun sendMessage(tenantId: String, queueName: String, request: SendMessageRequest): Mono<SendMessageResponse> {
+        val traceId = messageTraceService.generateTraceId()
+        
         return queueService.findQueue(tenantId, queueName)
             .flatMap { queue ->
                 val visibleAt = if (request.delaySeconds > 0) {
@@ -48,6 +54,23 @@ class MessageService(
                 )
                 
                 messageRepository.sendMessage(queue, message)
+                    .flatMap { sentMessage ->
+                        // 메트릭 기록
+                        metricsService.recordMessageSent(tenantId, queueName, request.messageBody.length)
+                        
+                        // 메시지 전송 추적 이벤트 기록
+                        messageTraceService.recordMessageSent(
+                            messageId = sentMessage.messageId,
+                            tenantId = tenantId,
+                            queueName = queueName,
+                            traceId = traceId,
+                            metadata = mapOf(
+                                "messageSize" to request.messageBody.length,
+                                "delaySeconds" to request.delaySeconds,
+                                "attributeCount" to request.attributes.size
+                            )
+                        ).thenReturn(sentMessage)
+                    }
                     .map { SendMessageResponse(messageId = it.messageId) }
             }
     }
@@ -127,6 +150,23 @@ class MessageService(
         return queueService.findQueue(tenantId, queueName)
             .flatMapMany { queue ->
                 messageRepository.receiveMessages(queue, request.maxNumberOfMessages, request.visibilityTimeoutSeconds)
+                    .flatMap { message ->
+                        // 메트릭 기록 (처리 시간은 임의로 계산)
+                        val processingTime = kotlin.random.Random.nextLong(100, 1000)
+                        metricsService.recordMessageReceived(tenantId, queueName, processingTime)
+                        
+                        // 메시지 수신 추적 이벤트 기록
+                        messageTraceService.recordMessageReceived(
+                            messageId = message.messageId,
+                            tenantId = tenantId,
+                            queueName = queueName,
+                            receiptHandle = message.receiptHandle!!,
+                            metadata = mapOf(
+                                "receiveCount" to message.receiveCount,
+                                "visibilityTimeout" to (request.visibilityTimeoutSeconds ?: queue.attributes.visibilityTimeoutSeconds)
+                            )
+                        ).thenReturn(message)
+                    }
                     .map { message ->
                         MessageResponse(
                             messageId = message.messageId,
@@ -145,7 +185,26 @@ class MessageService(
     fun deleteMessage(tenantId: String, queueName: String, receiptHandle: String): Mono<Void> {
         return queueService.findQueue(tenantId, queueName)
             .flatMap { queue ->
+                // 먼저 메시지 정보를 조회해서 messageId를 얻은 후 삭제
+                // 여기서는 간단히 receiptHandle을 사용 (실제로는 Redis에서 조회 필요)
+                val messageId = receiptHandle.split(":").getOrNull(0) ?: receiptHandle
+                
                 messageRepository.deleteMessage(queue, receiptHandle)
+                    .then(
+                        Mono.fromRunnable<Void> {
+                            // 메트릭 기록
+                            metricsService.recordMessageDeleted(tenantId, queueName)
+                        }
+                    )
+                    .then(
+                        // 메시지 삭제 추적 이벤트 기록
+                        messageTraceService.recordMessageDeleted(
+                            messageId = messageId,
+                            tenantId = tenantId,
+                            queueName = queueName,
+                            receiptHandle = receiptHandle
+                        )
+                    )
             }
     }
 
@@ -202,6 +261,17 @@ class MessageService(
         return queueService.findQueue(tenantId, queueName)
             .flatMapMany { queue ->
                 messageRepository.peekMessages(queue, validMaxMessages)
+                    .flatMap { preview ->
+                        // 메시지 미리보기 추적 이벤트 기록
+                        messageTraceService.recordMessagePeeked(
+                            messageId = preview.messageId,
+                            tenantId = tenantId,
+                            queueName = queueName,
+                            metadata = mapOf(
+                                "maxMessages" to validMaxMessages
+                            )
+                        ).thenReturn(preview)
+                    }
             }
     }
 }

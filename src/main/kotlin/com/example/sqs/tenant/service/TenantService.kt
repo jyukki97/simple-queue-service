@@ -24,4 +24,22 @@ class TenantService(
         return findByApiKey(apiKey)
             .map { it.tenantId }
     }
+    
+    fun validateApiKeyAndGetTenant(apiKey: String): Mono<Tenant> {
+        return findByApiKey(apiKey)
+            .filter { it.isActive }
+            .switchIfEmpty(Mono.error(IllegalArgumentException("잘못된 API 키입니다")))
+    }
+    
+    fun createTenant(tenantId: String, apiKey: String, name: String): Mono<Tenant> {
+        return tenantRepository.save(
+            Tenant(
+                tenantId = tenantId,
+                apiKey = apiKey,
+                name = name,
+                createdAt = java.time.Instant.now(),
+                isActive = true
+            )
+        )
+    }
 }
