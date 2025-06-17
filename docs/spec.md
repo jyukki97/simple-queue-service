@@ -36,9 +36,9 @@ AWS SQS와 유사한 경량 메시지 큐 시스템 구현
 - [x] 큐 생성 (CreateQueue)
   - 큐 속성 설정 (VisibilityTimeout, MessageRetentionPeriod, DelaySeconds 등)
   - DLQ 설정
-- [] 큐 삭제 (DeleteQueue)
+- [x] 큐 삭제 (DeleteQueue)
   - 큐와 모든 메시지 완전 삭제
-- [] 큐 목록 조회 (ListQueues)
+- [x] 큐 목록 조회 (ListQueues)
   - 테넌트별 큐 목록
   - 페이징 지원 (limit, offset)
   - 큐 이름 패턴 필터링
