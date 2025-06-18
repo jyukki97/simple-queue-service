@@ -50,7 +50,8 @@ docker-compose up -d
 ## API 테스트
 
 애플리케이션이 실행되면 다음 URL에서 접근 가능합니다:
-- API: http://localhost:8080
+- **백엔드 API**: http://localhost:8080
+- **관리자 대시보드**: http://localhost:3000
 - Health Check: http://localhost:8080/actuator/health
 - Metrics: http://localhost:8080/actuator/metrics
 
@@ -65,8 +66,15 @@ src/main/kotlin/com/example/sqs/
 ├── common/                            # 공통 모듈
 │   ├── domain/
 │   │   └── ApiResponse.kt             # 공통 응답 형식
+│   ├── exception/                     # 예외 처리
+│   │   ├── Exceptions.kt              # 커스텀 예외 클래스
+│   │   └── GlobalExceptionHandler.kt  # 글로벌 예외 핸들러
 │   └── controller/
 │       └── HealthController.kt        # 헬스체크 API
+├── auth/                              # 인증 및 인가
+│   ├── domain/                        # 인증 도메인 모델
+│   ├── service/                       # 인증 서비스
+│   └── filter/                        # API 키 필터
 ├── tenant/                            # 테넌트 도메인
 │   ├── domain/
 │   │   └── Tenant.kt                  # 테넌트 엔티티
@@ -74,16 +82,70 @@ src/main/kotlin/com/example/sqs/
 │   └── repository/                    # 테넌트 데이터 액세스
 ├── queue/                             # 큐 도메인
 │   ├── domain/
-│   │   └── Queue.kt                   # 큐 엔티티 & DTO
-│   ├── service/                       # 큐 비즈니스 로직
-│   ├── repository/                    # 큐 데이터 액세스
-│   └── controller/                    # 큐 REST API
-└── message/                           # 메시지 도메인
-    ├── domain/
-    │   └── Message.kt                 # 메시지 엔티티 & DTO
-    ├── service/                       # 메시지 비즈니스 로직
-    ├── repository/                    # 메시지 데이터 액세스
-    └── controller/                    # 메시지 REST API
+│   │   ├── Queue.kt                   # 큐 엔티티 & DTO (FIFO 지원)
+│   │   └── QueueStatistics.kt         # 큐 통계
+│   ├── service/
+│   │   └── QueueService.kt            # 큐 비즈니스 로직
+│   ├── repository/
+│   │   ├── QueueRepository.kt         # 큐 인터페이스
+│   │   └── RedisQueueRepository.kt    # Redis 큐 구현
+│   └── controller/
+│       └── QueueController.kt         # 큐 REST API
+├── message/                           # 메시지 도메인
+│   ├── domain/
+│   │   └── Message.kt                 # 메시지 엔티티 & DTO
+│   ├── service/
+│   │   └── MessageService.kt          # 메시지 비즈니스 로직
+│   ├── repository/
+│   │   ├── MessageRepository.kt       # 메시지 인터페이스
+│   │   └── RedisMessageRepository.kt  # Redis 메시지 구현
+│   └── controller/
+│       └── MessageController.kt       # 메시지 REST API
+├── admin/                             # 관리자 기능
+│   ├── domain/                        # 관리자 도메인 모델
+│   ├── service/                       # 대시보드, 테넌트 관리
+│   └── controller/                    # 관리자 API
+├── metrics/                           # 메트릭 및 모니터링
+│   ├── domain/                        # 메트릭 도메인 모델
+│   ├── service/                       # 메트릭 수집 및 알림
+│   └── controller/                    # 메트릭 API
+├── storage/                           # 핫/콜드 스토리지 계층화
+│   ├── domain/
+│   │   └── StorageTypes.kt            # 스토리지 계층 도메인
+│   ├── service/
+│   │   ├── StorageInterfaces.kt       # 스토리지 서비스 인터페이스
+│   │   ├── UnifiedStorageService.kt   # 통합 스토리지 서비스
+│   │   └── impl/                      # 계층별 스토리지 구현
+│   │       ├── HotStorageService.kt   # 핫 스토리지 (Redis)
+│   │       ├── WarmStorageService.kt  # 웜 스토리지 (Redis Disk)
+│   │       ├── ColdStorageService.kt  # 콜드 스토리지 (File)
+│   │       └── TieringManagerServiceImpl.kt # 자동 계층화 관리
+│   └── controller/
+│       └── StorageManagementController.kt # 스토리지 관리 API
+├── tracing/                           # 메시지 추적
+│   ├── domain/                        # 추적 도메인 모델
+│   ├── service/                       # 메시지 추적 서비스
+│   └── controller/                    # 추적 API
+└── performance/                       # 성능 최적화
+    ├── compression/
+    │   └── MessageCompressionService.kt  # 메시지 압축
+    ├── monitoring/
+    │   └── PerformanceMonitoringService.kt # 성능 모니터링
+    ├── partitioning/
+    │   └── QueuePartitioningService.kt # 큐 파티셔닝
+    ├── batch/
+    │   └── RedisBatchService.kt        # 배치 처리
+    └── cache/
+        └── QueueCacheService.kt        # 캐시 최적화
+
+frontend/                              # 관리자 대시보드 (React)
+├── src/
+│   ├── components/                    # React 컴포넌트
+│   ├── services/
+│   │   └── adminService.ts            # Admin API 연동
+│   └── types/
+│       └── admin.ts                   # 타입 정의
+└── package.json                       # 프론트엔드 의존성
 ```
 
 ### 빌드
@@ -98,3 +160,31 @@ src/main/kotlin/com/example/sqs/
 
 ## 문서
 자세한 스펙은 [docs/spec.md](docs/spec.md)를 참고하세요.
+
+## 🎨 관리자 대시보드
+
+### 프론트엔드 실행
+
+1. 프론트엔드 디렉토리로 이동
+```bash
+cd frontend
+```
+
+2. 의존성 설치 (최초 1회)
+```bash
+npm install
+```
+
+3. 개발 서버 실행
+```bash
+npm start
+```
+
+관리자 대시보드는 http://localhost:3000 에서 접근할 수 있습니다.
+
+### 주요 화면
+
+- **📊 대시보드**: 실시간 시스템 상태 및 메트릭 모니터링
+- **📦 큐 관리**: 큐 생성, 수정, 삭제 및 상태 조회
+- **👥 테넌트 관리**: 테넌트 생성 및 사용량 관리
+- **📈 시스템 모니터링**: 실시간 성능 메트릭 및 알림

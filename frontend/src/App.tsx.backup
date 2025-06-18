@@ -1,0 +1,57 @@
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import Dashboard from './components/Dashboard';
+import QueueManagement from './components/QueueManagement';
+import TenantManagement from './components/TenantManagement';
+import SystemMonitoring from './components/SystemMonitoring';
+import Navigation from './components/Navigation';
+import './App.css';
+
+function App() {
+  return (
+    <Router>
+      <div className="App">
+        <Navigation />
+        <div className="App-content">
+          <Routes>
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/queues" element={<QueueManagement />} />
+            <Route path="/tenants" element={<TenantManagement />} />
+            <Route path="/monitoring" element={<SystemMonitoring />} />
+          </Routes>
+        </div>
+      </div>
+    </Router>
+  );
+}
+              selectedQueue={selectedQueue || null}
+            />
+          </div>
+          
+          {selectedQueue && (
+            <div className="section">
+              <h2>메시지 관리 - {selectedQueue}</h2>
+              <MessageManager queueName={selectedQueue} />
+            </div>
+          )}
+          
+          {!selectedQueue && (
+            <div className="section">
+              <div className="placeholder">
+                <h3>큐를 선택하세요</h3>
+                <p>위에서 큐를 생성하거나 기존 큐를 선택하면 메시지 관리 기능을 사용할 수 있습니다.</p>
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
+      
+      <footer className="App-footer">
+        <p>Simple Queue Service - Kotlin/Spring Boot + React</p>
+      </footer>
+    </div>
+  );
+}
+
+export default App;
