@@ -22,7 +22,8 @@ data class QueueAttributes(
     val delaySeconds: Int = 0,
     val maxReceiveCount: Int = 3,
     val deadLetterTargetArn: String? = null,
-    val redrivePolicy: RedrivePolicy? = null
+    val redrivePolicy: RedrivePolicy? = null,
+    val fifoQueue: Boolean = false // FIFO 큐 여부
 ) {
     init {
         require(visibilityTimeoutSeconds in 0..43200) { "가시성 타임아웃은 0~43200초 사이여야 합니다" }

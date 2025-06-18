@@ -21,15 +21,3 @@ data class ErrorResponse(
     val code: String,
     val message: String
 )
-
-enum class ErrorCode(val message: String) {
-    QUEUE_NOT_FOUND("큐를 찾을 수 없습니다"),
-    QUEUE_ALREADY_EXISTS("큐가 이미 존재합니다"),
-    MESSAGE_NOT_FOUND("메시지를 찾을 수 없습니다"),
-    INVALID_RECEIPT_HANDLE("잘못된 receipt handle입니다"),
-    MESSAGE_TOO_LARGE("메시지 크기가 너무 큽니다"),
-    INVALID_PARAMETER("잘못된 파라미터입니다"),
-    UNAUTHORIZED("인증 실패"),
-    RATE_LIMIT_EXCEEDED("요청 한도 초과"),
-    INTERNAL_ERROR("내부 서버 오류")
-}

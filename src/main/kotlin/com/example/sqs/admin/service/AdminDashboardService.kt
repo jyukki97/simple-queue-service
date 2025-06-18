@@ -13,7 +13,7 @@ import kotlin.random.Random
 class AdminDashboardService(
     private val tenantRepository: TenantRepository,
     private val activityLogService: ActivityLogService,
-    private val alertService: AlertService
+    private val alertService: SystemAlertService
 ) {
 
     /**

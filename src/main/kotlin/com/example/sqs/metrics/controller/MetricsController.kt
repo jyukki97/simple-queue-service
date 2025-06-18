@@ -2,7 +2,7 @@ package com.example.sqs.metrics.controller
 
 import com.example.sqs.common.domain.ApiResponse
 import com.example.sqs.metrics.domain.*
-import com.example.sqs.metrics.service.AlertService
+import com.example.sqs.metrics.service.MetricsAlertService
 import com.example.sqs.metrics.service.MetricsService
 import com.example.sqs.tenant.service.TenantService
 import org.springframework.http.MediaType
@@ -19,7 +19,7 @@ import java.time.temporal.ChronoUnit
 @RequestMapping("/api/v1/metrics")
 class MetricsController(
     private val metricsService: MetricsService,
-    private val alertService: AlertService,
+    private val alertService: MetricsAlertService,
     private val tenantService: TenantService
 ) {
     

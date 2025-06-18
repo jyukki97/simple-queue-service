@@ -13,7 +13,7 @@ import java.util.UUID
  * 알림 관리 서비스
  */
 @Service
-class AlertService(
+class MetricsAlertService(
     private val metricsService: MetricsService
 ) {
     

@@ -45,6 +45,26 @@ app:
     partition-count: 4
     enable-partitioning: true
   
+  # 스토리지 계층화 설정
+  storage:
+    hot:
+      ttl-hours: 1
+      max-memory-usage-percent: 80
+    warm:
+      ttl-days: 1
+      max-disk-usage-gb: 100
+    cold:
+      base-path: ${COLD_STORAGE_PATH:/tmp/sqs-cold-storage}
+      compression-enabled: true
+      encryption-enabled: false
+      max-file-size-mb: 100
+    tiering:
+      enabled: true
+      check-interval-seconds: 300  # 5분
+      batch-size: 1000
+      hot-to-warm-age-seconds: 3600    # 1시간
+      warm-to-cold-age-seconds: 86400  # 24시간
+  
   # Redis 성능 최적화 설정
   redis:
     performance:

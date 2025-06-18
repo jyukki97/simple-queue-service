@@ -9,7 +9,7 @@ import java.util.UUID
 import kotlin.random.Random
 
 @Service
-class AlertService {
+class SystemAlertService {
     
     /**
      * 현재 활성화된 시스템 알림 목록을 가져옵니다.

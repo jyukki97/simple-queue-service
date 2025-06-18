@@ -121,3 +121,7 @@ data class DeleteMessageBatchResponse(
     val successful: List<String>,
     val failed: List<BatchMessageFailure> = emptyList()
 )
+
+data class ReceiveMessageResponse(
+    val messages: List<MessageResponse>
+)

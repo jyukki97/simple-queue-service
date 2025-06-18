@@ -33,6 +33,14 @@ class AccessDeniedException(
 ) : RuntimeException(message)
 
 /**
+ * 권한 인가 실패 예외 (인증은 성공했지만 권한이 없는 경우)
+ */
+class AuthorizationException(
+    override val message: String,
+    val code: String = "AUTHORIZATION_FAILED"
+) : RuntimeException(message)
+
+/**
  * 중복된 리소스 예외
  */
 class DuplicateResourceException(

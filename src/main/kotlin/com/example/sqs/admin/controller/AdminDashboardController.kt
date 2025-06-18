@@ -5,7 +5,7 @@ import com.example.sqs.admin.domain.AdminDashboard
 import com.example.sqs.admin.domain.SystemAlert
 import com.example.sqs.admin.service.ActivityLogService
 import com.example.sqs.admin.service.AdminDashboardService
-import com.example.sqs.admin.service.AlertService
+import com.example.sqs.admin.service.SystemAlertService
 import com.example.sqs.common.ApiResponse
 import com.example.sqs.common.exception.EntityNotFoundException
 import org.springframework.web.bind.annotation.*
@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.*
 @RequestMapping("/api/v1/admin/dashboard")
 class AdminDashboardController(
     private val adminDashboardService: AdminDashboardService,
-    private val alertService: AlertService,
+    private val alertService: SystemAlertService,
     private val activityLogService: ActivityLogService
 ) {
     

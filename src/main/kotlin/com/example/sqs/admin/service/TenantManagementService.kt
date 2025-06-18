@@ -2,6 +2,7 @@ package com.example.sqs.admin.service
 
 import com.example.sqs.admin.domain.*
 import com.example.sqs.common.exception.EntityNotFoundException
+import com.example.sqs.common.exception.OperationFailedException
 import com.example.sqs.tenant.domain.Tenant
 import com.example.sqs.tenant.repository.TenantRepository
 import org.springframework.data.domain.Page
@@ -10,6 +11,7 @@ import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Service
 import java.time.Instant
 import java.util.UUID
+import kotlin.random.Random
 
 @Service
 class TenantManagementService(
@@ -17,7 +19,7 @@ class TenantManagementService(
     private val activityLogService: ActivityLogService
 ) {
 
-    suspend fun createTenant(request: CreateTenantRequest): TenantResponse {
+    fun createTenant(request: CreateTenantRequest): TenantResponse {
         val apiKey = generateApiKey()
         val tenant = Tenant(
             tenantId = UUID.randomUUID().toString(),
@@ -40,14 +42,14 @@ class TenantManagementService(
         return mapToTenantResponse(savedTenant, request.quota)
     }
 
-    suspend fun getTenant(tenantId: String): TenantResponse {
+    fun getTenant(tenantId: String): TenantResponse {
         val tenant = tenantRepository.findByTenantId(tenantId).block()
             ?: throw EntityNotFoundException("테넌트를 찾을 수 없습니다: $tenantId")
 
         return mapToTenantResponse(tenant, getDefaultQuota())
     }
 
-    suspend fun updateTenant(tenantId: String, request: UpdateTenantRequest): TenantResponse {
+    fun updateTenant(tenantId: String, request: UpdateTenantRequest): TenantResponse {
         val existingTenant = tenantRepository.findByTenantId(tenantId).block()
             ?: throw EntityNotFoundException("테넌트를 찾을 수 없습니다: $tenantId")
 
@@ -57,7 +59,7 @@ class TenantManagementService(
         )
 
         val savedTenant = tenantRepository.save(updatedTenant).block()
-            ?: throw RuntimeException("Failed to update tenant")
+            ?: throw OperationFailedException("테넌트 업데이트에 실패했습니다")
 
         activityLogService.logActivity(
             tenantId = savedTenant.tenantId,
@@ -69,7 +71,7 @@ class TenantManagementService(
         return mapToTenantResponse(savedTenant, getDefaultQuota())
     }
 
-    suspend fun deleteTenant(tenantId: String) {
+    fun deleteTenant(tenantId: String) {
         val tenant = tenantRepository.findByTenantId(tenantId).block()
             ?: throw EntityNotFoundException("테넌트를 찾을 수 없습니다: $tenantId")
 
@@ -83,7 +85,7 @@ class TenantManagementService(
         ).block()
     }
 
-    suspend fun listTenants(pageRequest: PageRequest, status: TenantStatus?): Page<TenantResponse> {
+    fun listTenants(pageRequest: PageRequest, status: TenantStatus?): Page<TenantResponse> {
         val allTenants = tenantRepository.findAll().collectList().block() ?: emptyList()
 
         val filteredTenants = if (status != null) {
@@ -130,20 +132,20 @@ class TenantManagementService(
         return mapToTenantResponse(savedTenant, getDefaultQuota())
     }
 
-    suspend fun getTenantUsage(tenantId: String): TenantUsage {
+    fun getTenantUsage(tenantId: String): TenantUsage {
         // Mock implementation for now
         return TenantUsage(
             tenantId = tenantId,
             messagesSent = (100..10000).random().toLong(),
             messagesReceived = (90..9500).random().toLong(),
             activeQueues = (1..20).random(),
-            storageUsedMB = (1.0..100.0).random(),
+            storageUsedMB = Random.nextDouble(1.0, 100.0),
             apiCallsToday = (100..5000).random().toLong(),
             lastActivity = Instant.now().minusSeconds((1..86400).random().toLong())
         )
     }
 
-    suspend fun getTenantQuota(tenantId: String): TenantQuota {
+    fun getTenantQuota(tenantId: String): TenantQuota {
         // For now, return default quota. In real implementation, this would be stored per tenant
         return getDefaultQuota()
     }
@@ -160,7 +162,7 @@ class TenantManagementService(
         return quota
     }
 
-    suspend fun suspendTenant(tenantId: String) {
+    fun suspendTenant(tenantId: String) {
         val tenant = tenantRepository.findByTenantId(tenantId).block()
             ?: throw EntityNotFoundException("테넌트를 찾을 수 없습니다: $tenantId")
 
@@ -175,7 +177,7 @@ class TenantManagementService(
         ).block()
     }
 
-    suspend fun activateTenant(tenantId: String) {
+    fun activateTenant(tenantId: String) {
         val tenant = tenantRepository.findByTenantId(tenantId).block()
             ?: throw EntityNotFoundException("테넌트를 찾을 수 없습니다: $tenantId")
 

@@ -33,12 +33,6 @@ class QueueController(
             .flatMap { tenantId ->
                 queueService.createQueue(tenantId, request.queueName, request.attributes)
                     .map { queue -> ApiResponse.success(queue) }
-                    .onErrorMap { e ->
-                        when (e) {
-                            is IllegalArgumentException -> DuplicateResourceException(e.message ?: "Queue already exists")
-                            else -> OperationFailedException(e.message ?: "Queue creation failed")
-                        }
-                    }
             }
     }
 
@@ -53,13 +47,6 @@ class QueueController(
             .flatMap { tenantId ->
                 queueService.deleteQueue(tenantId, queueName)
                     .then(Mono.just(ApiResponse.success("큐가 성공적으로 삭제되었습니다: $queueName")))
-                    .onErrorMap { e ->
-                        when (e) {
-                            is QueueNotFoundException -> e
-                            is IllegalArgumentException -> QueueNotFoundException(e.message ?: "큐를 찾을 수 없습니다")
-                            else -> OperationFailedException(e.message ?: "큐 삭제 실패")
-                        }
-                    }
             }
     }
 
@@ -77,7 +64,6 @@ class QueueController(
                 queueService.listQueues(tenantId, limit, offset, namePattern)
                     .collectList()
                     .map { queues -> ApiResponse.success(queues) }
-                    .onErrorMap { e -> OperationFailedException(e.message ?: "큐 목록 조회 실패") }
             }
     }
 
@@ -90,15 +76,8 @@ class QueueController(
         return tenantService.getTenantId(apiKey)
             .switchIfEmpty(Mono.error(AuthenticationException("Invalid API key")))
             .flatMap { tenantId ->
-                queueService.getQueue(tenantId, queueName)
+                queueService.findQueue(tenantId, queueName)
                     .map { queue -> ApiResponse.success(queue) }
-                    .onErrorMap { e ->
-                        when (e) {
-                            is QueueNotFoundException -> e
-                            is IllegalArgumentException -> QueueNotFoundException(e.message ?: "큐를 찾을 수 없습니다")
-                            else -> OperationFailedException(e.message ?: "큐 속성 조회 실패")
-                        }
-                    }
             }
     }
 
@@ -112,15 +91,8 @@ class QueueController(
         return tenantService.getTenantId(apiKey)
             .switchIfEmpty(Mono.error(AuthenticationException("Invalid API key")))
             .flatMap { tenantId ->
-                queueService.updateQueue(tenantId, queueName, request.attributes)
+                queueService.updateQueueAttributes(tenantId, queueName, request.attributes)
                     .map { queue -> ApiResponse.success(queue) }
-                    .onErrorMap { e ->
-                        when (e) {
-                            is QueueNotFoundException -> e
-                            is IllegalArgumentException -> QueueNotFoundException(e.message ?: "큐를 찾을 수 없습니다")
-                            else -> OperationFailedException(e.message ?: "큐 속성 수정 실패")
-                        }
-                    }
             }
     }
 
@@ -135,13 +107,6 @@ class QueueController(
             .flatMap { tenantId ->
                 queueService.getQueueStatistics(tenantId, queueName)
                     .map { stats -> ApiResponse.success(stats) }
-                    .onErrorMap { e ->
-                        when (e) {
-                            is QueueNotFoundException -> e
-                            is IllegalArgumentException -> QueueNotFoundException(e.message ?: "큐를 찾을 수 없습니다")
-                            else -> OperationFailedException(e.message ?: "큐 통계 조회 실패")
-                        }
-                    }
             }
     }
 }

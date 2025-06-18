@@ -31,13 +31,6 @@ class MessageController(
             .flatMap { tenantId ->
                 messageService.sendMessage(tenantId, queueName, request)
                     .map { response -> ApiResponse.success(response) }
-                    .onErrorMap { e ->
-                        when (e) {
-                            is QueueNotFoundException -> e
-                            is IllegalArgumentException -> ValidationException(e.message ?: "잘못된 파라미터입니다")
-                            else -> OperationFailedException(e.message ?: "메시지 전송 실패")
-                        }
-                    }
             }
     }
 
@@ -53,15 +46,10 @@ class MessageController(
         return tenantService.getTenantId(apiKey)
             .switchIfEmpty(Mono.error(AuthenticationException("Invalid API key")))
             .flatMap { tenantId ->
-                messageService.receiveMessages(tenantId, queueName, maxNumberOfMessages, visibilityTimeoutSeconds, waitTimeSeconds)
-                    .map { response -> ApiResponse.success(response) }
-                    .onErrorMap { e ->
-                        when (e) {
-                            is QueueNotFoundException -> e
-                            is IllegalArgumentException -> ValidationException(e.message ?: "잘못된 파라미터입니다")
-                            else -> OperationFailedException(e.message ?: "메시지 수신 실패")
-                        }
-                    }
+                val request = ReceiveMessageRequest(maxNumberOfMessages, visibilityTimeoutSeconds, waitTimeSeconds)
+                messageService.receiveMessages(tenantId, queueName, request)
+                    .collectList()
+                    .map { messages -> ApiResponse.success(ReceiveMessageResponse(messages)) }
             }
     }
 
@@ -77,14 +65,6 @@ class MessageController(
             .flatMap { tenantId ->
                 messageService.deleteMessage(tenantId, queueName, receiptHandle)
                     .then(Mono.just(ApiResponse.success("메시지가 성공적으로 삭제되었습니다")))
-                    .onErrorMap { e ->
-                        when (e) {
-                            is QueueNotFoundException -> e
-                            is InvalidReceiptHandleException -> e
-                            is IllegalArgumentException -> InvalidReceiptHandleException(e.message ?: "잘못된 receipt handle입니다")
-                            else -> OperationFailedException(e.message ?: "메시지 삭제 실패")
-                        }
-                    }
             }
     }
 
@@ -99,13 +79,6 @@ class MessageController(
             .flatMap { tenantId ->
                 messageService.purgeQueue(tenantId, queueName)
                     .then(Mono.just(ApiResponse.success("큐의 모든 메시지가 삭제되었습니다")))
-                    .onErrorMap { e ->
-                        when (e) {
-                            is QueueNotFoundException -> e
-                            is IllegalArgumentException -> QueueNotFoundException(e.message ?: "큐를 찾을 수 없습니다")
-                            else -> OperationFailedException(e.message ?: "큐 메시지 전체 삭제 실패")
-                        }
-                    }
             }
     }
 
@@ -122,13 +95,6 @@ class MessageController(
             .flatMap { tenantId ->
                 messageService.sendMessageBatch(tenantId, queueName, request)
                     .map { response -> ApiResponse.success(response) }
-                    .onErrorMap { e ->
-                        when (e) {
-                            is QueueNotFoundException -> e
-                            is IllegalArgumentException -> ValidationException(e.message ?: "잘못된 파라미터입니다")
-                            else -> OperationFailedException(e.message ?: "메시지 일괄 전송 실패")
-                        }
-                    }
             }
     }
 
@@ -144,13 +110,6 @@ class MessageController(
             .flatMap { tenantId ->
                 messageService.deleteMessageBatch(tenantId, queueName, request)
                     .map { response -> ApiResponse.success(response) }
-                    .onErrorMap { e ->
-                        when (e) {
-                            is QueueNotFoundException -> e
-                            is IllegalArgumentException -> ValidationException(e.message ?: "잘못된 파라미터입니다")
-                            else -> OperationFailedException(e.message ?: "메시지 일괄 삭제 실패")
-                        }
-                    }
             }
     }
 }

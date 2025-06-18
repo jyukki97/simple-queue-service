@@ -98,6 +98,13 @@ class GlobalExceptionHandler {
         return ApiResponse.error(ex.code, ex.message ?: "Validation failed")
     }
 
+    @ExceptionHandler(AuthorizationException::class)
+    @ResponseStatus(HttpStatus.FORBIDDEN)
+    fun handleAuthorizationException(ex: AuthorizationException): ApiResponse<Nothing> {
+        log.error("Authorization failed: {}", ex.message)
+        return ApiResponse.error(ex.code, ex.message ?: "Authorization failed")
+    }
+
     @ExceptionHandler(Exception::class)
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     fun handleGenericException(ex: Exception): ApiResponse<Nothing> {

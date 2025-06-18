@@ -36,25 +36,18 @@ class MessageTraceController(
         logger.info("메시지 추적 정보 조회 요청: messageId=$messageId")
         
         return tenantService.getTenantId(apiKey)
+            .switchIfEmpty(Mono.error(AuthenticationException("Invalid API key")))
             .flatMap { tenantId ->
                 messageTraceService.getMessageTrace(messageId)
                     .map { trace ->
                         // 테넌트 권한 확인
                         if (trace.tenantId != tenantId) {
-                            ApiResponse.error(ErrorCode.UNAUTHORIZED.name, "접근 권한이 없습니다")
-                        } else {
-                            logger.info("메시지 추적 정보 조회 완료: messageId=$messageId, events=${trace.events.size}")
-                            ApiResponse.success(trace)
+                            throw AuthorizationException("접근 권한이 없습니다")
                         }
+                        logger.info("메시지 추적 정보 조회 완료: messageId=$messageId, events=${trace.events.size}")
+                        ApiResponse.success(trace)
                     }
-                    .switchIfEmpty(
-                        Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "메시지 추적 정보를 찾을 수 없습니다"))
-                    )
-            }
-            .switchIfEmpty(Mono.just(ApiResponse.error(ErrorCode.UNAUTHORIZED.name, ErrorCode.UNAUTHORIZED.message)))
-            .onErrorResume { error ->
-                logger.error("메시지 추적 정보 조회 중 오류 발생", error)
-                Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "메시지 추적 정보 조회 실패"))
+                    .switchIfEmpty(Mono.error(EntityNotFoundException("메시지 추적 정보를 찾을 수 없습니다")))
             }
     }
 
@@ -75,6 +68,7 @@ class MessageTraceController(
         val endInstant = endTime.toInstant(ZoneOffset.UTC)
         
         return tenantService.getTenantId(apiKey)
+            .switchIfEmpty(Mono.error(AuthenticationException("Invalid API key")))
             .flatMap { tenantId ->
                 messageTraceService.getMessageTraces(tenantId, queueName, startInstant, endInstant, limit)
                     .collectList()
@@ -82,11 +76,6 @@ class MessageTraceController(
                         logger.info("메시지 추적 목록 조회 완료: count=${traces.size}")
                         ApiResponse.success(traces)
                     }
-            }
-            .switchIfEmpty(Mono.just(ApiResponse.error(ErrorCode.UNAUTHORIZED.name, ErrorCode.UNAUTHORIZED.message)))
-            .onErrorResume { error ->
-                logger.error("메시지 추적 목록 조회 중 오류 발생", error)
-                Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "메시지 추적 목록 조회 실패"))
             }
     }
 
@@ -106,17 +95,13 @@ class MessageTraceController(
         val endInstant = endTime.toInstant(ZoneOffset.UTC)
         
         return tenantService.getTenantId(apiKey)
+            .switchIfEmpty(Mono.error(AuthenticationException("Invalid API key")))
             .flatMap { tenantId ->
                 messageTraceService.getTraceStatistics(tenantId, queueName, startInstant, endInstant)
                     .map { statistics ->
                         logger.info("추적 통계 조회 완료: totalMessages=${statistics.totalMessages}")
                         ApiResponse.success(statistics)
                     }
-            }
-            .switchIfEmpty(Mono.just(ApiResponse.error(ErrorCode.UNAUTHORIZED.name, ErrorCode.UNAUTHORIZED.message)))
-            .onErrorResume { error ->
-                logger.error("추적 통계 조회 중 오류 발생", error)
-                Mono.just(ApiResponse.error(ErrorCode.INVALID_PARAMETER.name, "추적 통계 조회 실패"))
             }
     }
 }
