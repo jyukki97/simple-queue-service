@@ -132,10 +132,9 @@ class TenantManagementService(
         // Mock implementation for now
         return TenantUsage(
             tenantId = tenantId,
-            messagesSent = (100..10000).random().toLong(),
-            messagesReceived = (90..9500).random().toLong(),
-            activeQueues = (1..20).random(),
-            storageUsedMB = Random.nextDouble(1.0, 100.0),
+            queueCount = (1..20).random(),
+            messageCount = (100..10000).random().toLong(),
+            storageUsedBytes = (1024L..104857600L).random(), // 1KB ~ 100MB
             apiCallsToday = (100..5000).random().toLong(),
             lastActivity = Instant.now().minusSeconds((1..86400).random().toLong())
         )

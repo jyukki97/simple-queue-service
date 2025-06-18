@@ -105,10 +105,9 @@ enum class TenantStatus {
  */
 data class TenantUsage(
     val tenantId: String,
-    val messagesSent: Long,
-    val messagesReceived: Long,
-    val activeQueues: Int,
-    val storageUsedMB: Double,
+    val queueCount: Int,
+    val messageCount: Long,
+    val storageUsedBytes: Long,
     val apiCallsToday: Long,
-    val lastActivity: Instant
+    val lastActivity: Instant? = null
 )
