@@ -1,10 +1,10 @@
 package com.example.sqs.metrics.controller
 
+import com.example.sqs.auth.domain.AuthContext
 import com.example.sqs.common.domain.ApiResponse
 import com.example.sqs.metrics.domain.*
 import com.example.sqs.metrics.service.MetricsAlertService
 import com.example.sqs.metrics.service.MetricsService
-import com.example.sqs.tenant.service.TenantService
 import org.springframework.http.MediaType
 import org.springframework.web.bind.annotation.*
 import reactor.core.publisher.Flux
@@ -19,8 +19,7 @@ import java.time.temporal.ChronoUnit
 @RequestMapping("/api/v1/metrics")
 class MetricsController(
     private val metricsService: MetricsService,
-    private val alertService: MetricsAlertService,
-    private val tenantService: TenantService
+    private val alertService: MetricsAlertService
 ) {
     
     /**
@@ -28,13 +27,10 @@ class MetricsController(
      */
     @GetMapping("/queues/{queueName}")
     fun getQueueMetrics(
-        @RequestHeader("X-API-Key") apiKey: String,
         @PathVariable queueName: String
     ): Mono<ApiResponse<QueueMetrics>> {
-        return tenantService.validateApiKeyAndGetTenant(apiKey)
-            .flatMap { tenant ->
-                metricsService.collectQueueMetrics(tenant.tenantId, queueName)
-            }
+        val tenantId = AuthContext.getCurrentTenantId()
+        return metricsService.collectQueueMetrics(tenantId, queueName)
             .map { metrics ->
                 ApiResponse.success(metrics)
             }
@@ -45,12 +41,9 @@ class MetricsController(
      */
     @GetMapping("/queues")
     fun getAllQueueMetrics(
-        @RequestHeader("X-API-Key") apiKey: String
     ): Mono<ApiResponse<List<QueueMetrics>>> {
-        return tenantService.validateApiKeyAndGetTenant(apiKey)
-            .flatMapMany { tenant ->
-                metricsService.getAllQueueMetrics(tenant.tenantId)
-            }
+        val tenantId = AuthContext.getCurrentTenantId()
+        return metricsService.getAllQueueMetrics(tenantId)
             .collectList()
             .map { metricsList ->
                 ApiResponse.success(metricsList)
@@ -62,12 +55,8 @@ class MetricsController(
      */
     @GetMapping("/system")
     fun getSystemMetrics(
-        @RequestHeader("X-API-Key") apiKey: String
     ): Mono<ApiResponse<SystemMetrics>> {
-        return tenantService.validateApiKeyAndGetTenant(apiKey)
-            .flatMap {
-                metricsService.collectSystemMetrics()
-            }
+        return metricsService.collectSystemMetrics()
             .map { metrics ->
                 ApiResponse.success(metrics)
             }
@@ -78,23 +67,20 @@ class MetricsController(
      */
     @GetMapping("/timeseries/{metricName}")
     fun getTimeSeriesMetrics(
-        @RequestHeader("X-API-Key") apiKey: String,
         @PathVariable metricName: String,
         @RequestParam(defaultValue = "1") hoursBack: Long,
         @RequestParam(required = false) queueName: String?,
         @RequestParam(required = false) labels: Map<String, String>?
     ): Mono<ApiResponse<MetricTimeSeries>> {
-        return tenantService.validateApiKeyAndGetTenant(apiKey)
-            .flatMap { tenant ->
-                val endTime = Instant.now()
-                val startTime = endTime.minus(hoursBack, ChronoUnit.HOURS)
-                
-                val metricLabels = mutableMapOf<String, String>("tenant_id" to tenant.tenantId)
-                queueName?.let { metricLabels["queue_name"] = it }
-                labels?.let { metricLabels.putAll(it) }
-                
-                metricsService.getTimeSeriesMetrics(metricName, metricLabels, startTime, endTime)
-            }
+        val tenantId = AuthContext.getCurrentTenantId()
+        val endTime = Instant.now()
+        val startTime = endTime.minus(hoursBack, ChronoUnit.HOURS)
+        
+        val metricLabels = mutableMapOf<String, String>("tenant_id" to tenantId)
+        queueName?.let { metricLabels["queue_name"] = it }
+        labels?.let { metricLabels.putAll(it) }
+        
+        return metricsService.getTimeSeriesMetrics(metricName, metricLabels, startTime, endTime)
             .map { timeSeries ->
                 ApiResponse.success(timeSeries)
             }
@@ -105,15 +91,12 @@ class MetricsController(
      */
     @GetMapping(value = ["/stream/queues/{queueName}"], produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
     fun streamQueueMetrics(
-        @RequestHeader("X-API-Key") apiKey: String,
         @PathVariable queueName: String
     ): Flux<QueueMetrics> {
-        return tenantService.validateApiKeyAndGetTenant(apiKey)
-            .flatMapMany { tenant ->
-                Flux.interval(java.time.Duration.ofSeconds(5))
-                    .flatMap {
-                        metricsService.collectQueueMetrics(tenant.tenantId, queueName)
-                    }
+        val tenantId = AuthContext.getCurrentTenantId()
+        return Flux.interval(java.time.Duration.ofSeconds(5))
+            .flatMap {
+                metricsService.collectQueueMetrics(tenantId, queueName)
             }
     }
     
@@ -122,20 +105,16 @@ class MetricsController(
      */
     @PostMapping("/alerts/rules")
     fun createAlertRule(
-        @RequestHeader("X-API-Key") apiKey: String,
         @RequestBody request: CreateAlertRuleRequest
     ): Mono<ApiResponse<AlertRule>> {
-        return tenantService.validateApiKeyAndGetTenant(apiKey)
-            .flatMap {
-                alertService.createAlertRule(
-                    name = request.name,
-                    description = request.description,
-                    metricName = request.metricName,
-                    condition = request.condition,
-                    threshold = request.threshold,
-                    duration = request.duration
-                )
-            }
+        return alertService.createAlertRule(
+            name = request.name,
+            description = request.description,
+            metricName = request.metricName,
+            condition = request.condition,
+            threshold = request.threshold,
+            duration = request.duration
+        )
             .map { rule ->
                 ApiResponse.success(rule)
             }
@@ -146,12 +125,8 @@ class MetricsController(
      */
     @GetMapping("/alerts/rules")
     fun getAlertRules(
-        @RequestHeader("X-API-Key") apiKey: String
     ): Mono<ApiResponse<List<AlertRule>>> {
-        return tenantService.validateApiKey(apiKey)
-            .flatMapMany {
-                alertService.getAllAlertRules()
-            }
+        return alertService.getAllAlertRules()
             .collectList()
             .map { rules ->
                 ApiResponse.success(rules)
@@ -163,13 +138,9 @@ class MetricsController(
      */
     @GetMapping("/alerts/rules/{ruleId}")
     fun getAlertRule(
-        @RequestHeader("X-API-Key") apiKey: String,
         @PathVariable ruleId: String
     ): Mono<ApiResponse<AlertRule?>> {
-        return tenantService.validateApiKey(apiKey)
-            .flatMap {
-                alertService.getAlertRule(ruleId)
-            }
+        return alertService.getAlertRule(ruleId)
             .map { rule ->
                 ApiResponse.success(rule)
             }
@@ -180,25 +151,21 @@ class MetricsController(
      */
     @PutMapping("/alerts/rules/{ruleId}")
     fun updateAlertRule(
-        @RequestHeader("X-API-Key") apiKey: String,
         @PathVariable ruleId: String,
         @RequestBody request: UpdateAlertRuleRequest
     ): Mono<ApiResponse<AlertRule?>> {
-        return tenantService.validateApiKey(apiKey)
-            .flatMap {
-                val updatedRule = AlertRule(
-                    id = ruleId,
-                    name = request.name,
-                    description = request.description,
-                    metricName = request.metricName,
-                    condition = request.condition,
-                    threshold = request.threshold,
-                    duration = request.duration,
-                    isEnabled = request.isEnabled,
-                    createdAt = Instant.now() // 실제로는 기존 값 유지
-                )
-                alertService.updateAlertRule(ruleId, updatedRule)
-            }
+        val updatedRule = AlertRule(
+            id = ruleId,
+            name = request.name,
+            description = request.description,
+            metricName = request.metricName,
+            condition = request.condition,
+            threshold = request.threshold,
+            duration = request.duration,
+            isEnabled = request.isEnabled,
+            createdAt = Instant.now() // 실제로는 기존 값 유지
+        )
+        return alertService.updateAlertRule(ruleId, updatedRule)
             .map { rule ->
                 ApiResponse.success(rule)
             }
@@ -209,13 +176,9 @@ class MetricsController(
      */
     @DeleteMapping("/alerts/rules/{ruleId}")
     fun deleteAlertRule(
-        @RequestHeader("X-API-Key") apiKey: String,
         @PathVariable ruleId: String
     ): Mono<ApiResponse<Boolean>> {
-        return tenantService.validateApiKey(apiKey)
-            .flatMap {
-                alertService.deleteAlertRule(ruleId)
-            }
+        return alertService.deleteAlertRule(ruleId)
             .map { deleted ->
                 ApiResponse.success(deleted)
             }
@@ -226,14 +189,10 @@ class MetricsController(
      */
     @PatchMapping("/alerts/rules/{ruleId}/toggle")
     fun toggleAlertRule(
-        @RequestHeader("X-API-Key") apiKey: String,
         @PathVariable ruleId: String,
         @RequestBody request: ToggleAlertRuleRequest
     ): Mono<ApiResponse<AlertRule?>> {
-        return tenantService.validateApiKey(apiKey)
-            .flatMap {
-                alertService.toggleAlertRule(ruleId, request.enabled)
-            }
+        return alertService.toggleAlertRule(ruleId, request.enabled)
             .map { rule ->
                 ApiResponse.success(rule)
             }
@@ -244,12 +203,8 @@ class MetricsController(
      */
     @GetMapping(value = ["/alerts/events/stream"], produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
     fun streamAlertEvents(
-        @RequestHeader("X-API-Key") apiKey: String
     ): Flux<AlertEvent> {
-        return tenantService.validateApiKey(apiKey)
-            .flatMapMany {
-                alertService.subscribeToAlerts()
-            }
+        return alertService.subscribeToAlerts()
     }
     
     /**
@@ -257,20 +212,17 @@ class MetricsController(
      */
     @PostMapping("/alerts/trigger")
     fun triggerAlert(
-        @RequestHeader("X-API-Key") apiKey: String,
         @RequestBody request: TriggerAlertRequest
     ): Mono<ApiResponse<AlertEvent>> {
-        return tenantService.validateApiKeyAndGetTenant(apiKey)
-            .flatMap { tenant ->
-                alertService.triggerAlert(
-                    ruleId = request.ruleId,
-                    message = request.message,
-                    severity = request.severity,
-                    metricValue = request.metricValue,
-                    queueName = request.queueName,
-                    tenantId = tenant.tenantId
-                )
-            }
+        val tenantId = AuthContext.getCurrentTenantId()
+        return alertService.triggerAlert(
+            ruleId = request.ruleId,
+            message = request.message,
+            severity = request.severity,
+            metricValue = request.metricValue,
+            queueName = request.queueName,
+            tenantId = tenantId
+        )
             .map { event ->
                 ApiResponse.success(event)
             }
