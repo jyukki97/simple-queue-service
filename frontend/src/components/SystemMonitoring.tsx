@@ -1,31 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area } from 'recharts';
+import adminService from '../services/adminService';
+import { SystemMetrics, SystemMetricPoint, PerformanceAlert } from '../types/admin';
 import './SystemMonitoring.css';
 
-interface SystemMetric {
-  timestamp: string;
-  cpuUsage: number;
-  memoryUsage: number;
-  diskUsage: number;
-  networkIn: number;
-  networkOut: number;
-  activeConnections: number;
-  queueOperations: number;
-  messageThroughput: number;
-}
-
-interface PerformanceAlert {
-  id: string;
-  type: 'cpu' | 'memory' | 'disk' | 'network' | 'queue';
-  message: string;
-  severity: 'warning' | 'critical';
-  timestamp: string;
-  value: number;
-  threshold: number;
-}
-
 const SystemMonitoring: React.FC = () => {
-  const [metrics, setMetrics] = useState<SystemMetric[]>([]);
+  const [metrics, setMetrics] = useState<SystemMetricPoint[]>([]);
+  const [currentSystemMetrics, setCurrentSystemMetrics] = useState<SystemMetrics | null>(null);
   const [alerts, setAlerts] = useState<PerformanceAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState<'1h' | '6h' | '24h' | '7d'>('1h');
@@ -35,54 +16,62 @@ const SystemMonitoring: React.FC = () => {
     const fetchData = async () => {
       try {
         setLoading(true);
-        // Mock data generation
-        const now = new Date();
-        const dataPoints = timeRange === '1h' ? 60 : timeRange === '6h' ? 72 : timeRange === '24h' ? 96 : 168;
-        const interval = timeRange === '1h' ? 1 : timeRange === '6h' ? 5 : timeRange === '24h' ? 15 : 60;
         
-        const mockMetrics: SystemMetric[] = [];
-        for (let i = dataPoints; i >= 0; i--) {
-          const timestamp = new Date(now.getTime() - i * interval * 60 * 1000);
-          mockMetrics.push({
-            timestamp: timestamp.toISOString(),
-            cpuUsage: 20 + Math.random() * 60 + Math.sin(i / 10) * 10,
-            memoryUsage: 40 + Math.random() * 40 + Math.sin(i / 15) * 15,
-            diskUsage: 60 + Math.random() * 20,
-            networkIn: Math.random() * 100 + 50,
-            networkOut: Math.random() * 80 + 30,
-            activeConnections: Math.floor(100 + Math.random() * 500),
-            queueOperations: Math.floor(50 + Math.random() * 200),
-            messageThroughput: Math.floor(500 + Math.random() * 1500)
+        // 실제 API에서 시스템 메트릭 가져오기
+        const [systemMetrics, timeSeriesData] = await Promise.all([
+          adminService.getSystemMetrics(),
+          adminService.getTimeSeriesMetrics('system', timeRange === '1h' ? 1 : timeRange === '6h' ? 6 : timeRange === '24h' ? 24 : 168)
+        ]);
+        
+        setCurrentSystemMetrics(systemMetrics);
+        setMetrics(timeSeriesData);
+        
+        // 실제 시스템 상태 기반 알림 생성
+        const realAlerts: PerformanceAlert[] = [];
+        
+        if (systemMetrics.cpuUsagePercent > 80) {
+          realAlerts.push({
+            id: 'cpu-alert',
+            type: 'cpu',
+            message: `CPU 사용량이 높습니다: ${systemMetrics.cpuUsagePercent.toFixed(1)}%`,
+            severity: systemMetrics.cpuUsagePercent > 90 ? 'critical' : 'warning',
+            timestamp: new Date().toISOString(),
+            value: systemMetrics.cpuUsagePercent,
+            threshold: 80
           });
         }
         
-        setMetrics(mockMetrics);
-        
-        // Mock alerts
-        const mockAlerts: PerformanceAlert[] = [
-          {
-            id: 'alert-1',
+        if (systemMetrics.memoryUsageBytes > 0.8 * 1024 * 1024 * 1024) { // 800MB 이상
+          const memoryGB = systemMetrics.memoryUsageBytes / (1024 * 1024 * 1024);
+          realAlerts.push({
+            id: 'memory-alert',
             type: 'memory',
-            message: '메모리 사용량이 높습니다',
-            severity: 'warning',
-            timestamp: new Date(Date.now() - 300000).toISOString(),
-            value: 85,
-            threshold: 80
-          },
-          {
-            id: 'alert-2',
-            type: 'queue',
-            message: '큐 처리 지연이 발생했습니다',
-            severity: 'critical',
-            timestamp: new Date(Date.now() - 600000).toISOString(),
-            value: 2500,
-            threshold: 2000
-          }
-        ];
+            message: `메모리 사용량이 높습니다: ${memoryGB.toFixed(1)}GB`,
+            severity: memoryGB > 1.5 ? 'critical' : 'warning',
+            timestamp: new Date().toISOString(),
+            value: memoryGB,
+            threshold: 0.8
+          });
+        }
         
-        setAlerts(mockAlerts);
+        if (systemMetrics.errorRate > 5) {
+          realAlerts.push({
+            id: 'error-alert',
+            type: 'queue',
+            message: `에러율이 높습니다: ${systemMetrics.errorRate.toFixed(1)}%`,
+            severity: systemMetrics.errorRate > 10 ? 'critical' : 'warning',
+            timestamp: new Date().toISOString(),
+            value: systemMetrics.errorRate,
+            threshold: 5
+          });
+        }
+        
+        setAlerts(realAlerts);
       } catch (err) {
         console.error('Failed to fetch metrics:', err);
+        // 에러 시 빈 데이터 설정
+        setMetrics([]);
+        setAlerts([]);
       } finally {
         setLoading(false);
       }
@@ -206,6 +195,62 @@ const SystemMonitoring: React.FC = () => {
                 <button className="dismiss-btn">✕</button>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* 현재 시스템 상태 */}
+      {currentSystemMetrics && (
+        <div className="current-stats-section">
+          <h2>📊 현재 시스템 상태</h2>
+          <div className="stats-grid">
+            <div className="stat-card">
+              <div className="stat-icon">🖥️</div>
+              <div className="stat-info">
+                <h3>CPU 사용량</h3>
+                <p className="stat-value">{currentSystemMetrics.cpuUsagePercent.toFixed(1)}%</p>
+              </div>
+            </div>
+            
+            <div className="stat-card">
+              <div className="stat-icon">💾</div>
+              <div className="stat-info">
+                <h3>메모리 사용량</h3>
+                <p className="stat-value">{(currentSystemMetrics.memoryUsageBytes / (1024 * 1024 * 1024)).toFixed(1)}GB</p>
+              </div>
+            </div>
+            
+            <div className="stat-card">
+              <div className="stat-icon">📈</div>
+              <div className="stat-info">
+                <h3>처리량</h3>
+                <p className="stat-value">{currentSystemMetrics.totalThroughputPerSecond.toFixed(0)}/초</p>
+              </div>
+            </div>
+            
+            <div className="stat-card">
+              <div className="stat-icon">⚠️</div>
+              <div className="stat-info">
+                <h3>에러율</h3>
+                <p className="stat-value">{currentSystemMetrics.errorRate.toFixed(1)}%</p>
+              </div>
+            </div>
+            
+            <div className="stat-card">
+              <div className="stat-icon">🔗</div>
+              <div className="stat-info">
+                <h3>Redis 연결</h3>
+                <p className="stat-value">{currentSystemMetrics.redisConnectionsActive}</p>
+              </div>
+            </div>
+            
+            <div className="stat-card">
+              <div className="stat-icon">⏱️</div>
+              <div className="stat-info">
+                <h3>평균 지연시간</h3>
+                <p className="stat-value">{currentSystemMetrics.averageLatency.toFixed(0)}ms</p>
+              </div>
+            </div>
           </div>
         </div>
       )}

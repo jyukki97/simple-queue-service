@@ -7,7 +7,7 @@ import java.time.Instant
  */
 data class CreateTenantRequest(
     val name: String,
-    val email: String,
+    val email: String? = null,
     val quota: TenantQuota = TenantQuota()
 )
 

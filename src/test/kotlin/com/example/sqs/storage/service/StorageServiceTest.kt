@@ -52,7 +52,8 @@ class StorageServiceTest {
             tenantId = "test-tenant",
             queueName = "test-queue",
             messageBody = "Test message body",
-            sentTimestamp = Instant.now()
+            sentTimestamp = Instant.now(),
+            visibleAt = Instant.now()
         )
         
         assertNotNull(message)

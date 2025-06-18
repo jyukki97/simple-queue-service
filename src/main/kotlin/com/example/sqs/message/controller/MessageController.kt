@@ -112,4 +112,20 @@ class MessageController(
                     .map { response -> ApiResponse.success(response) }
             }
     }
+
+    @GetMapping("/peek")
+    fun peekMessages(
+        @RequestHeader("X-API-Key") apiKey: String,
+        @PathVariable queueName: String,
+        @RequestParam(defaultValue = "10") maxMessages: Int
+    ): Mono<ApiResponse<PeekMessageResponse>> {
+        logger.info("메시지 미리보기 요청: $queueName, maxMessages: $maxMessages")
+        return tenantService.getTenantId(apiKey)
+            .switchIfEmpty(Mono.error(AuthenticationException("Invalid API key")))
+            .flatMap { tenantId ->
+                messageService.peekMessages(tenantId, queueName, maxMessages)
+                    .collectList()
+                    .map { messages -> ApiResponse.success(PeekMessageResponse(messages)) }
+            }
+    }
 }

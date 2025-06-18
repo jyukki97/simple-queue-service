@@ -1,35 +1,21 @@
 import React, { useState, useEffect } from 'react';
+import tenantService, { ExtendedTenant, CreateTenantRequest } from '../services/tenantService';
 import './TenantManagement.css';
 
-interface Tenant {
-  tenantId: string;
-  name: string;
-  apiKey: string;
-  createdAt: string;
-  isActive: boolean;
-  queueCount: number;
-  messageCount: number;
-  dailyApiCalls: number;
-  storageUsed: number;
-  quota: {
-    maxQueues: number;
-    maxMessages: number;
-    maxApiCalls: number;
-    maxStorage: number;
-  };
-}
-
 const TenantManagement: React.FC = () => {
-  const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [tenants, setTenants] = useState<ExtendedTenant[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [selectedTenant, setSelectedTenant] = useState<ExtendedTenant | null>(null);
   const [newTenant, setNewTenant] = useState({
     name: '',
-    maxQueues: 100,
-    maxMessages: 100000,
-    maxApiCalls: 10000,
-    maxStorage: 1024 * 1024 * 1024 // 1GB
+    email: '',
+    maxQueues: 10,
+    maxMessagesPerQueue: 1000,
+    maxMessageSizeKB: 256,
+    maxApiCallsPerMinute: 100
   });
 
   useEffect(() => {
@@ -39,64 +25,62 @@ const TenantManagement: React.FC = () => {
   const fetchTenants = async () => {
     try {
       setLoading(true);
-      // Mock data - 실제로는 API에서 가져와야 함
-      const mockTenants: Tenant[] = [
-        {
-          tenantId: 'tenant-1',
-          name: 'E-Commerce Platform',
-          apiKey: 'key_1234567890abcdef',
-          createdAt: '2024-01-10T10:00:00Z',
-          isActive: true,
-          queueCount: 5,
-          messageCount: 12580,
-          dailyApiCalls: 8450,
-          storageUsed: 524288000, // 500MB
-          quota: {
-            maxQueues: 100,
-            maxMessages: 100000,
-            maxApiCalls: 10000,
-            maxStorage: 1024 * 1024 * 1024
-          }
-        },
-        {
-          tenantId: 'tenant-2',
-          name: 'Analytics Service',
-          apiKey: 'key_abcdef1234567890',
-          createdAt: '2024-01-12T14:30:00Z',
-          isActive: true,
-          queueCount: 3,
-          messageCount: 8920,
-          dailyApiCalls: 5670,
-          storageUsed: 314572800, // 300MB
-          quota: {
-            maxQueues: 50,
-            maxMessages: 50000,
-            maxApiCalls: 5000,
-            maxStorage: 512 * 1024 * 1024
-          }
-        },
-        {
-          tenantId: 'tenant-3',
-          name: 'Notification System',
-          apiKey: 'key_fedcba0987654321',
-          createdAt: '2024-01-08T09:15:00Z',
-          isActive: false,
-          queueCount: 2,
-          messageCount: 3420,
-          dailyApiCalls: 1250,
-          storageUsed: 104857600, // 100MB
-          quota: {
-            maxQueues: 25,
-            maxMessages: 25000,
-            maxApiCalls: 2500,
-            maxStorage: 256 * 1024 * 1024
-          }
-        }
-      ];
+      const tenantsData = await tenantService.getTenants();
       
-      setTenants(mockTenants);
+      // 각 테넌트에 대한 추가 정보 수집
+      const enrichedTenants = await Promise.all(
+        tenantsData.map(async (tenant) => {
+          try {
+            const [usage, quota] = await Promise.all([
+              tenantService.getTenantUsage(tenant.tenantId),
+              tenantService.getTenantQuota(tenant.tenantId)
+            ]);
+            
+            return {
+              ...tenant,
+              queueCount: usage.queueCount,
+              messageCount: usage.messageCount,
+              dailyApiCalls: usage.apiCallsToday,
+              storageUsed: usage.storageUsedBytes,
+              quota: {
+                maxQueues: quota.maxQueues || 10,
+                maxMessagesPerQueue: quota.maxMessagesPerQueue || 1000,
+                maxMessageSizeKB: quota.maxMessageSizeKB || 256,
+                maxApiCallsPerMinute: quota.maxApiCallsPerMinute || 100,
+                // 백워드 호환을 위한 임시 매핑
+                maxMessages: quota.maxMessagesPerQueue || 1000,
+                maxApiCalls: quota.maxApiCallsPerMinute || 100,
+                maxStorage: 1024 * 1024 * 1024 // 1GB 기본값
+              },
+              isActive: tenant.status === 'ACTIVE'
+            } as ExtendedTenant;
+          } catch (err) {
+            console.error(`Error fetching data for tenant ${tenant.tenantId}:`, err);
+            return {
+              ...tenant,
+              queueCount: 0,
+              messageCount: 0,
+              dailyApiCalls: 0,
+              storageUsed: 0,
+              quota: {
+                maxQueues: 10,
+                maxMessagesPerQueue: 1000,
+                maxMessageSizeKB: 256,
+                maxApiCallsPerMinute: 100,
+                maxMessages: 1000,
+                maxApiCalls: 100,
+                maxStorage: 1024 * 1024 * 1024
+              },
+              isActive: tenant.status === 'ACTIVE'
+            } as ExtendedTenant;
+          }
+        })
+      );
+      
+      setTenants(enrichedTenants);
       setError(null);
     } catch (err) {
+      console.error('Failed to fetch tenants:', err);
       setError(err instanceof Error ? err.message : '테넌트 목록을 불러오는데 실패했습니다.');
     } finally {
       setLoading(false);
@@ -106,50 +90,91 @@ const TenantManagement: React.FC = () => {
   const handleCreateTenant = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const tenantId = `tenant-${Date.now()}`;
-      const apiKey = `key_${Math.random().toString(36).substring(2)}`;
-      
-      const createdTenant: Tenant = {
-        tenantId,
+      const request: CreateTenantRequest = {
         name: newTenant.name,
-        apiKey,
-        createdAt: new Date().toISOString(),
-        isActive: true,
-        queueCount: 0,
-        messageCount: 0,
-        dailyApiCalls: 0,
-        storageUsed: 0,
+        email: newTenant.email,
         quota: {
           maxQueues: newTenant.maxQueues,
-          maxMessages: newTenant.maxMessages,
-          maxApiCalls: newTenant.maxApiCalls,
-          maxStorage: newTenant.maxStorage
+          maxMessagesPerQueue: newTenant.maxMessagesPerQueue,
+          maxMessageSizeKB: newTenant.maxMessageSizeKB,
+          maxApiCallsPerMinute: newTenant.maxApiCallsPerMinute
         }
       };
       
-      setTenants([...tenants, createdTenant]);
+      await tenantService.createTenant(request);
+      await fetchTenants(); // 목록 새로고침
       setShowCreateForm(false);
       setNewTenant({
         name: '',
-        maxQueues: 100,
-        maxMessages: 100000,
-        maxApiCalls: 10000,
-        maxStorage: 1024 * 1024 * 1024
+        email: '',
+        maxQueues: 10,
+        maxMessagesPerQueue: 1000,
+        maxMessageSizeKB: 256,
+        maxApiCallsPerMinute: 100
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : '테넌트 생성에 실패했습니다.');
     }
   };
 
-  const handleToggleStatus = async (tenantId: string) => {
+  const handleToggleStatus = async (tenantId: string, currentStatus: boolean) => {
     try {
-      setTenants(tenants.map(tenant => 
-        tenant.tenantId === tenantId 
-          ? { ...tenant, isActive: !tenant.isActive }
-          : tenant
-      ));
+      if (currentStatus) {
+        await tenantService.suspendTenant(tenantId);
+      } else {
+        await tenantService.activateTenant(tenantId);
+      }
+      await fetchTenants(); // 목록 새로고침
     } catch (err) {
       setError(err instanceof Error ? err.message : '테넌트 상태 변경에 실패했습니다.');
+    }
+  };
+
+  const handleDeleteTenant = async (tenantId: string) => {
+    if (!window.confirm('정말로 이 테넌트를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) {
+      return;
+    }
+
+    try {
+      await tenantService.deleteTenant(tenantId);
+      await fetchTenants(); // 목록 새로고침
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '테넌트 삭제에 실패했습니다.');
+    }
+  };
+
+  const handleResetApiKey = async (tenantId: string) => {
+    if (!window.confirm('API 키를 재설정하시겠습니까? 기존 키는 더 이상 사용할 수 없습니다.')) {
+      return;
+    }
+
+    try {
+      await tenantService.resetApiKey(tenantId);
+      await fetchTenants(); // 목록 새로고침
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'API 키 재설정에 실패했습니다.');
+    }
+  };
+
+  const handleShowDetails = async (tenant: ExtendedTenant) => {
+    setSelectedTenant(tenant);
+    setShowDetailModal(true);
+  };
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      alert('클립보드에 복사되었습니다.');
+    } catch (err) {
+      console.error('클립보드 복사 실패:', err);
+      // 백업 방법
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+      alert('클립보드에 복사되었습니다.');
     }
   };
 
@@ -219,47 +244,57 @@ const TenantManagement: React.FC = () => {
               </div>
 
               <div className="form-group">
+                <label>이메일:</label>
+                <input
+                  type="email"
+                  value={newTenant.email}
+                  onChange={(e) => setNewTenant({...newTenant, email: e.target.value})}
+                  placeholder="이메일을 입력하세요"
+                  required
+                />
+              </div>
+
+              <div className="form-group">
                 <label>최대 큐 수:</label>
                 <input
                   type="number"
                   value={newTenant.maxQueues}
                   onChange={(e) => setNewTenant({...newTenant, maxQueues: Number(e.target.value)})}
                   min="1"
-                  max="1000"
+                  max="100"
                 />
               </div>
 
               <div className="form-group">
-                <label>최대 메시지 수:</label>
+                <label>큐당 최대 메시지 수:</label>
                 <input
                   type="number"
-                  value={newTenant.maxMessages}
-                  onChange={(e) => setNewTenant({...newTenant, maxMessages: Number(e.target.value)})}
-                  min="1000"
-                  max="10000000"
-                />
-              </div>
-
-              <div className="form-group">
-                <label>일일 API 호출 한도:</label>
-                <input
-                  type="number"
-                  value={newTenant.maxApiCalls}
-                  onChange={(e) => setNewTenant({...newTenant, maxApiCalls: Number(e.target.value)})}
+                  value={newTenant.maxMessagesPerQueue}
+                  onChange={(e) => setNewTenant({...newTenant, maxMessagesPerQueue: Number(e.target.value)})}
                   min="100"
-                  max="1000000"
+                  max="10000"
                 />
               </div>
 
               <div className="form-group">
-                <label>스토리지 한도 (GB):</label>
+                <label>분당 최대 API 호출:</label>
                 <input
                   type="number"
-                  value={newTenant.maxStorage / (1024 * 1024 * 1024)}
-                  onChange={(e) => setNewTenant({...newTenant, maxStorage: Number(e.target.value) * 1024 * 1024 * 1024})}
-                  min="0.1"
+                  value={newTenant.maxApiCallsPerMinute}
+                  onChange={(e) => setNewTenant({...newTenant, maxApiCallsPerMinute: Number(e.target.value)})}
+                  min="10"
                   max="1000"
-                  step="0.1"
+                />
+              </div>
+
+              <div className="form-group">
+                <label>최대 메시지 크기 (KB):</label>
+                <input
+                  type="number"
+                  value={newTenant.maxMessageSizeKB}
+                  onChange={(e) => setNewTenant({...newTenant, maxMessageSizeKB: Number(e.target.value)})}
+                  min="1"
+                  max="1024"
                 />
               </div>
 
@@ -289,7 +324,7 @@ const TenantManagement: React.FC = () => {
               <div className="tenant-status">
                 <button 
                   className={`status-toggle ${tenant.isActive ? 'active' : 'inactive'}`}
-                  onClick={() => handleToggleStatus(tenant.tenantId)}
+                  onClick={() => handleToggleStatus(tenant.tenantId, tenant.isActive)}
                 >
                   {tenant.isActive ? '활성' : '비활성'}
                 </button>
@@ -300,7 +335,13 @@ const TenantManagement: React.FC = () => {
               <div className="detail-item">
                 <span className="label">API 키:</span>
                 <span className="api-key">{tenant.apiKey}</span>
-                <button className="copy-btn" title="복사">📋</button>
+                <button 
+                  className="copy-btn" 
+                  title="복사"
+                  onClick={() => copyToClipboard(tenant.apiKey)}
+                >
+                  📋
+                </button>
               </div>
               <div className="detail-item">
                 <span className="label">생성일:</span>
@@ -333,15 +374,15 @@ const TenantManagement: React.FC = () => {
                 <div className="stat-header">
                   <span className="stat-label">메시지 수</span>
                   <span className="stat-value">
-                    {formatNumber(tenant.messageCount)} / {formatNumber(tenant.quota.maxMessages)}
+                    {formatNumber(tenant.messageCount)} / {formatNumber(tenant.quota.maxMessagesPerQueue)}
                   </span>
                 </div>
                 <div className="progress-bar">
                   <div 
                     className="progress-fill" 
                     style={{ 
-                      width: `${getUsagePercentage(tenant.messageCount, tenant.quota.maxMessages)}%`,
-                      backgroundColor: getUsageColor(getUsagePercentage(tenant.messageCount, tenant.quota.maxMessages))
+                      width: `${getUsagePercentage(tenant.messageCount, tenant.quota.maxMessagesPerQueue)}%`,
+                      backgroundColor: getUsageColor(getUsagePercentage(tenant.messageCount, tenant.quota.maxMessagesPerQueue))
                     }}
                   ></div>
                 </div>
@@ -351,15 +392,15 @@ const TenantManagement: React.FC = () => {
                 <div className="stat-header">
                   <span className="stat-label">일일 API 호출</span>
                   <span className="stat-value">
-                    {formatNumber(tenant.dailyApiCalls)} / {formatNumber(tenant.quota.maxApiCalls)}
+                    {formatNumber(tenant.dailyApiCalls)} / {formatNumber(tenant.quota.maxApiCallsPerMinute)}
                   </span>
                 </div>
                 <div className="progress-bar">
                   <div 
                     className="progress-fill" 
                     style={{ 
-                      width: `${getUsagePercentage(tenant.dailyApiCalls, tenant.quota.maxApiCalls)}%`,
-                      backgroundColor: getUsageColor(getUsagePercentage(tenant.dailyApiCalls, tenant.quota.maxApiCalls))
+                      width: `${getUsagePercentage(tenant.dailyApiCalls, tenant.quota.maxApiCallsPerMinute)}%`,
+                      backgroundColor: getUsageColor(getUsagePercentage(tenant.dailyApiCalls, tenant.quota.maxApiCallsPerMinute))
                     }}
                   ></div>
                 </div>
@@ -369,15 +410,15 @@ const TenantManagement: React.FC = () => {
                 <div className="stat-header">
                   <span className="stat-label">스토리지</span>
                   <span className="stat-value">
-                    {formatBytes(tenant.storageUsed)} / {formatBytes(tenant.quota.maxStorage)}
+                    {formatBytes(tenant.storageUsed)} / {formatBytes(1024 * 1024 * 1024)}
                   </span>
                 </div>
                 <div className="progress-bar">
                   <div 
                     className="progress-fill" 
                     style={{ 
-                      width: `${getUsagePercentage(tenant.storageUsed, tenant.quota.maxStorage)}%`,
-                      backgroundColor: getUsageColor(getUsagePercentage(tenant.storageUsed, tenant.quota.maxStorage))
+                      width: `${getUsagePercentage(tenant.storageUsed, 1024 * 1024 * 1024)}%`,
+                      backgroundColor: getUsageColor(getUsagePercentage(tenant.storageUsed, 1024 * 1024 * 1024))
                     }}
                   ></div>
                 </div>
@@ -385,9 +426,24 @@ const TenantManagement: React.FC = () => {
             </div>
 
             <div className="tenant-actions">
-              <button className="action-btn">📊 상세 통계</button>
-              <button className="action-btn">⚙️ 설정</button>
-              <button className="action-btn">📝 로그</button>
+              <button 
+                className="action-btn"
+                onClick={() => handleShowDetails(tenant)}
+              >
+                📊 상세 통계
+              </button>
+              <button 
+                className="action-btn"
+                onClick={() => handleResetApiKey(tenant.tenantId)}
+              >
+                🔑 API 키 재설정
+              </button>
+              <button 
+                className="action-btn delete-btn"
+                onClick={() => handleDeleteTenant(tenant.tenantId)}
+              >
+                �️ 삭제
+              </button>
             </div>
           </div>
         ))}
@@ -403,6 +459,94 @@ const TenantManagement: React.FC = () => {
           >
             ➕ 첫 번째 테넌트 생성하기
           </button>
+        </div>
+      )}
+
+      {/* 상세 통계 모달 */}
+      {showDetailModal && selectedTenant && (
+        <div className="modal-overlay">
+          <div className="modal detail-modal">
+            <h2>📊 {selectedTenant.name} - 상세 통계</h2>
+            
+            <div className="detail-stats-grid">
+              <div className="detail-stat-card">
+                <h3>기본 정보</h3>
+                <div className="stat-row">
+                  <span>테넌트 ID:</span>
+                  <span>{selectedTenant.tenantId}</span>
+                </div>
+                <div className="stat-row">
+                  <span>생성일:</span>
+                  <span>{new Date(selectedTenant.createdAt).toLocaleDateString('ko-KR')}</span>
+                </div>
+                <div className="stat-row">
+                  <span>상태:</span>
+                  <span className={selectedTenant.isActive ? 'status-active' : 'status-inactive'}>
+                    {selectedTenant.isActive ? '활성' : '비활성'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="detail-stat-card">
+                <h3>사용량 현황</h3>
+                <div className="stat-row">
+                  <span>큐 수:</span>
+                  <span>{formatNumber(selectedTenant.queueCount)} / {formatNumber(selectedTenant.quota.maxQueues)}</span>
+                </div>
+                <div className="stat-row">
+                  <span>메시지 수:</span>
+                  <span>{formatNumber(selectedTenant.messageCount)} / {formatNumber(selectedTenant.quota.maxMessagesPerQueue)}</span>
+                </div>
+                <div className="stat-row">
+                  <span>오늘 API 호출:</span>
+                  <span>{formatNumber(selectedTenant.dailyApiCalls)} / {formatNumber(selectedTenant.quota.maxApiCallsPerMinute)}</span>
+                </div>
+                <div className="stat-row">
+                  <span>스토리지:</span>
+                  <span>{formatBytes(selectedTenant.storageUsed)} / {formatBytes(1024 * 1024 * 1024)}</span>
+                </div>
+              </div>
+
+              <div className="detail-stat-card">
+                <h3>API 키 관리</h3>
+                <div className="api-key-section">
+                  <label>현재 API 키:</label>
+                  <div className="api-key-display">
+                    <input 
+                      type="text" 
+                      value={selectedTenant.apiKey} 
+                      readOnly 
+                      className="api-key-input"
+                    />
+                    <button 
+                      className="copy-btn"
+                      onClick={() => copyToClipboard(selectedTenant.apiKey)}
+                    >
+                      📋
+                    </button>
+                  </div>
+                  <button 
+                    className="reset-key-btn"
+                    onClick={() => {
+                      handleResetApiKey(selectedTenant.tenantId);
+                      setShowDetailModal(false);
+                    }}
+                  >
+                    🔑 새 API 키 생성
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="modal-actions">
+              <button 
+                className="cancel-btn"
+                onClick={() => setShowDetailModal(false)}
+              >
+                닫기
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

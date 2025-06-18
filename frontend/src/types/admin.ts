@@ -188,3 +188,39 @@ export interface QueueMetrics {
   messageCount: number;
   processingRate: number;
 }
+
+export interface SystemMetrics {
+  timestamp: number;
+  totalQueues: number;
+  totalMessages: number;
+  totalTenants: number;
+  totalThroughputPerSecond: number;
+  averageLatency: number;
+  errorRate: number;
+  memoryUsageBytes: number;
+  cpuUsagePercent: number;
+  redisConnectionsActive: number;
+  redisConnectionsIdle: number;
+}
+
+export interface SystemMetricPoint {
+  timestamp: string;
+  cpuUsage: number;
+  memoryUsage: number;
+  diskUsage: number;
+  networkIn: number;
+  networkOut: number;
+  activeConnections: number;
+  queueOperations: number;
+  messageThroughput: number;
+}
+
+export interface PerformanceAlert {
+  id: string;
+  type: 'cpu' | 'memory' | 'disk' | 'network' | 'queue';
+  message: string;
+  severity: 'warning' | 'critical';
+  timestamp: string;
+  value: number;
+  threshold: number;
+}

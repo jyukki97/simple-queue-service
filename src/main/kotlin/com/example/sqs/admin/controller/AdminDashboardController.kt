@@ -3,6 +3,7 @@ package com.example.sqs.admin.controller
 import com.example.sqs.admin.domain.ActivityLog
 import com.example.sqs.admin.domain.AdminDashboard
 import com.example.sqs.admin.domain.SystemAlert
+import com.example.sqs.admin.domain.SystemStats
 import com.example.sqs.admin.service.ActivityLogService
 import com.example.sqs.admin.service.AdminDashboardService
 import com.example.sqs.admin.service.SystemAlertService
@@ -84,5 +85,23 @@ class AdminDashboardController(
     ): ApiResponse<List<ActivityLog>> {
         val activities = activityLogService.getRecentActivities(limit)
         return ApiResponse.success(activities)
+    }
+
+    /**
+     * 시스템 통계를 조회합니다.
+     */
+    @GetMapping("/stats")
+    suspend fun getSystemStats(): ApiResponse<SystemStats> {
+        val stats = adminDashboardService.getSystemStats()
+        return ApiResponse.success(stats)
+    }
+
+    /**
+     * 시스템 상태를 조회합니다.
+     */
+    @GetMapping("/system/status")
+    fun getSystemStatus(): ApiResponse<Map<String, Any>> {
+        val status = adminDashboardService.getSystemStatus()
+        return ApiResponse.success(status)
     }
 }

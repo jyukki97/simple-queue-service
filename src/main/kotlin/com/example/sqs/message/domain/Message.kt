@@ -125,3 +125,7 @@ data class DeleteMessageBatchResponse(
 data class ReceiveMessageResponse(
     val messages: List<MessageResponse>
 )
+
+data class PeekMessageResponse(
+    val messages: List<MessagePreview>
+)

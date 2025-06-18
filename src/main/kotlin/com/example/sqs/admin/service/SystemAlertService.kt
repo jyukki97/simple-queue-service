@@ -15,42 +15,31 @@ class SystemAlertService {
      * 현재 활성화된 시스템 알림 목록을 가져옵니다.
      */
     fun getActiveAlerts(): List<SystemAlert> {
-        // Mock 구현 - 실제로는 DB에서 가져옵니다
-        return (1..Random.nextInt(0, 3)).map { i ->
-            val type = AlertType.values().random()
-            val title = when (type) {
-                AlertType.MEMORY_HIGH -> "시스템 메모리 사용량 높음"
-                AlertType.DISK_FULL -> "디스크 공간 부족"
-                AlertType.QUEUE_OVERFLOW -> "큐 오버플로우 발생"
-                AlertType.DLQ_THRESHOLD -> "DLQ 임계값 초과"
-                AlertType.TENANT_QUOTA_EXCEEDED -> "테넌트 할당량 초과"
-            }
-            
-            val message = when (type) {
-                AlertType.MEMORY_HIGH -> "현재 메모리 사용량이 80%를 초과하였습니다."
-                AlertType.DISK_FULL -> "디스크 사용량이 90%를 초과하였습니다."
-                AlertType.QUEUE_OVERFLOW -> "큐 'tenant-${i}/queue-${i}'의 메시지 수가 임계값을 초과하였습니다."
-                AlertType.DLQ_THRESHOLD -> "DLQ 'tenant-${i}/dlq-${i}'의 메시지가 10개를 초과하였습니다."
-                AlertType.TENANT_QUOTA_EXCEEDED -> "테넌트 'tenant-${i}'가 API 호출 할당량을 초과하였습니다."
-            }
-            
-            val severity = when (Random.nextInt(0, 4)) {
-                0 -> AlertSeverity.LOW
-                1 -> AlertSeverity.MEDIUM
-                2 -> AlertSeverity.HIGH
-                else -> AlertSeverity.CRITICAL
-            }
-            
-            SystemAlert(
-                id = UUID.randomUUID().toString(),
-                type = type,
-                title = title,
-                message = message,
-                severity = severity,
-                timestamp = Instant.now().minusSeconds(Random.nextLong(60, 3600)),
-                isResolved = false
+        // 실제 시스템 상태를 기반으로 알림을 생성합니다
+        val alerts = mutableListOf<SystemAlert>()
+        
+        // JVM 메모리 사용량 체크
+        val runtime = Runtime.getRuntime()
+        val usedMemory = runtime.totalMemory() - runtime.freeMemory()
+        val maxMemory = runtime.maxMemory()
+        val memoryUsage = if (maxMemory > 0) usedMemory.toDouble() / maxMemory * 100 else 0.0
+        
+        if (memoryUsage > 80) {
+            alerts.add(
+                SystemAlert(
+                    id = UUID.randomUUID().toString(),
+                    type = AlertType.MEMORY_HIGH,
+                    title = "시스템 메모리 사용량 높음",
+                    message = "현재 메모리 사용량이 ${String.format("%.1f", memoryUsage)}%입니다.",
+                    severity = if (memoryUsage > 90) AlertSeverity.CRITICAL else AlertSeverity.HIGH,
+                    timestamp = Instant.now(),
+                    isResolved = false
+                )
             )
         }
+        
+        // 실제 시스템에 문제가 없으면 빈 리스트 반환
+        return alerts
     }
     
     /**

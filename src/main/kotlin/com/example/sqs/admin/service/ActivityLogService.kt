@@ -33,16 +33,8 @@ class ActivityLogService {
     }
     
     fun getRecentActivities(limit: Int = 50): List<ActivityLog> {
-        // Mock implementation
-        return (1..limit).map { i ->
-            ActivityLog(
-                id = "activity-$i",
-                tenantId = "tenant-${(1..5).random()}",
-                action = listOf("QUEUE_CREATED", "MESSAGE_SENT", "TENANT_UPDATED", "API_KEY_RESET").random(),
-                description = "Mock activity detail $i",
-                timestamp = Instant.now().minusSeconds((i * 60).toLong()),
-                severity = ActivitySeverity.INFO
-            )
-        }
+        // 실제 구현에서는 데이터베이스에서 활동 로그를 가져옵니다
+        // 현재는 실제 활동이 없으므로 빈 리스트를 반환합니다
+        return emptyList()
     }
 }

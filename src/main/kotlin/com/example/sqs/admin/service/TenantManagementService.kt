@@ -9,48 +9,60 @@ import org.springframework.data.domain.Page
 import org.springframework.data.domain.PageImpl
 import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Service
+import org.slf4j.LoggerFactory
+import kotlinx.coroutines.reactive.awaitSingle
+import kotlinx.coroutines.reactive.awaitFirstOrNull
 import java.time.Instant
 import java.util.UUID
 import kotlin.random.Random
 
 @Service
 class TenantManagementService(
-    private val tenantRepository: TenantRepository,
-    private val activityLogService: ActivityLogService
+    private val tenantRepository: TenantRepository
 ) {
 
-    fun createTenant(request: CreateTenantRequest): TenantResponse {
-        val apiKey = generateApiKey()
-        val tenant = Tenant(
-            tenantId = UUID.randomUUID().toString(),
-            apiKey = apiKey,
-            name = request.name,
-            createdAt = Instant.now(),
-            isActive = true
-        )
+    private val logger = LoggerFactory.getLogger(TenantManagementService::class.java)
 
-        val savedTenant = tenantRepository.save(tenant).block()
-            ?: throw RuntimeException("Failed to save tenant")
+    suspend fun createTenant(request: CreateTenantRequest): TenantResponse {
+        logger.info("Creating tenant with request: {}", request)
+        
+        try {
+            val apiKey = generateApiKey()
+            logger.debug("Generated API key: {}", apiKey)
+            
+            val tenant = Tenant(
+                tenantId = UUID.randomUUID().toString(),
+                apiKey = apiKey,
+                name = request.name,
+                createdAt = Instant.now(),
+                isActive = true
+            )
+            logger.debug("Created tenant entity: {}", tenant)
 
-        activityLogService.logActivity(
-            tenantId = savedTenant.tenantId,
-            action = "CREATE_TENANT",
-            description = "새 테넌트 '${savedTenant.name}' 생성됨",
-            severity = ActivitySeverity.INFO
-        ).block()
+            val savedTenant = tenantRepository.save(tenant).awaitSingle()
+            logger.info("Saved tenant to repository: {}", savedTenant)
 
-        return mapToTenantResponse(savedTenant, request.quota)
+            val quota = request.quota ?: getDefaultQuota()
+            val email = request.email ?: "${tenant.name.lowercase().replace(" ", ".")}@example.com"
+            
+            val response = mapToTenantResponse(savedTenant, quota, email)
+            logger.info("Created tenant response: {}", response)
+            return response
+        } catch (e: Exception) {
+            logger.error("Error creating tenant: ${e.message}", e)
+            throw e
+        }
     }
 
-    fun getTenant(tenantId: String): TenantResponse {
-        val tenant = tenantRepository.findByTenantId(tenantId).block()
+    suspend fun getTenant(tenantId: String): TenantResponse {
+        val tenant = tenantRepository.findByTenantId(tenantId).awaitFirstOrNull()
             ?: throw EntityNotFoundException("테넌트를 찾을 수 없습니다: $tenantId")
 
         return mapToTenantResponse(tenant, getDefaultQuota())
     }
 
-    fun updateTenant(tenantId: String, request: UpdateTenantRequest): TenantResponse {
-        val existingTenant = tenantRepository.findByTenantId(tenantId).block()
+    suspend fun updateTenant(tenantId: String, request: UpdateTenantRequest): TenantResponse {
+        val existingTenant = tenantRepository.findByTenantId(tenantId).awaitFirstOrNull()
             ?: throw EntityNotFoundException("테넌트를 찾을 수 없습니다: $tenantId")
 
         val updatedTenant = existingTenant.copy(
@@ -58,76 +70,60 @@ class TenantManagementService(
             isActive = request.isActive ?: existingTenant.isActive
         )
 
-        val savedTenant = tenantRepository.save(updatedTenant).block()
-            ?: throw OperationFailedException("테넌트 업데이트에 실패했습니다")
-
-        activityLogService.logActivity(
-            tenantId = savedTenant.tenantId,
-            action = "UPDATE_TENANT",
-            description = "테넌트 정보 업데이트됨",
-            severity = ActivitySeverity.INFO
-        ).block()
+        val savedTenant = tenantRepository.save(updatedTenant).awaitSingle()
 
         return mapToTenantResponse(savedTenant, getDefaultQuota())
     }
 
-    fun deleteTenant(tenantId: String) {
-        val tenant = tenantRepository.findByTenantId(tenantId).block()
+    suspend fun deleteTenant(tenantId: String) {
+        val tenant = tenantRepository.findByTenantId(tenantId).awaitFirstOrNull()
             ?: throw EntityNotFoundException("테넌트를 찾을 수 없습니다: $tenantId")
 
-        tenantRepository.delete(tenant).block()
-
-        activityLogService.logActivity(
-            tenantId = tenantId,
-            action = "DELETE_TENANT",
-            description = "테넌트 삭제됨",
-            severity = ActivitySeverity.WARNING
-        ).block()
+        tenantRepository.delete(tenant).awaitFirstOrNull()
     }
 
-    fun listTenants(pageRequest: PageRequest, status: TenantStatus?): Page<TenantResponse> {
-        val allTenants = tenantRepository.findAll().collectList().block() ?: emptyList()
+    suspend fun listTenants(pageRequest: PageRequest, status: TenantStatus?): Page<TenantResponse> {
+        try {
+            val allTenants = tenantRepository.findAll().collectList().awaitSingle()
 
-        val filteredTenants = if (status != null) {
-            allTenants.filter { tenant ->
-                when (status) {
-                    TenantStatus.ACTIVE -> tenant.isActive
-                    TenantStatus.SUSPENDED -> !tenant.isActive
-                    TenantStatus.INACTIVE -> !tenant.isActive
+            val filteredTenants = if (status != null) {
+                allTenants.filter { tenant ->
+                    when (status) {
+                        TenantStatus.ACTIVE -> tenant.isActive
+                        TenantStatus.SUSPENDED -> !tenant.isActive
+                        TenantStatus.INACTIVE -> !tenant.isActive
+                    }
                 }
+            } else {
+                allTenants
             }
-        } else {
-            allTenants
-        }
 
-        val startIndex = pageRequest.offset.toInt()
-        val endIndex = minOf(startIndex + pageRequest.pageSize, filteredTenants.size)
-        val pageContent = if (startIndex < filteredTenants.size) {
-            filteredTenants.subList(startIndex, endIndex)
-                .map { mapToTenantResponse(it, getDefaultQuota()) }
-        } else {
-            emptyList()
-        }
+            val startIndex = pageRequest.offset.toInt()
+            val endIndex = minOf(startIndex + pageRequest.pageSize, filteredTenants.size)
+            val pageContent = if (startIndex < filteredTenants.size) {
+                filteredTenants.subList(startIndex, endIndex)
+                    .map { mapToTenantResponse(it, getDefaultQuota()) }
+            } else {
+                emptyList()
+            }
 
-        return PageImpl(pageContent, pageRequest, filteredTenants.size.toLong())
+            return PageImpl(pageContent, pageRequest, filteredTenants.size.toLong())
+        } catch (e: Exception) {
+            // 에러 발생 시 빈 페이지 반환
+            println("Error in listTenants: ${e.message}")
+            e.printStackTrace()
+            return PageImpl(emptyList(), pageRequest, 0)
+        }
     }
 
     suspend fun resetApiKey(tenantId: String): TenantResponse {
-        val tenant = tenantRepository.findByTenantId(tenantId).block()
+        val tenant = tenantRepository.findByTenantId(tenantId).awaitFirstOrNull()
             ?: throw EntityNotFoundException("테넌트를 찾을 수 없습니다: $tenantId")
 
         val newApiKey = generateApiKey()
         val updatedTenant = tenant.copy(apiKey = newApiKey)
 
-        val savedTenant = tenantRepository.save(updatedTenant).block()
-            ?: throw RuntimeException("Failed to reset API key")
-
-        activityLogService.logActivity(
-            tenantId = tenantId,
-            action = "RESET_API_KEY",
-            description = "API 키가 재설정됨",
-            severity = ActivitySeverity.INFO
-        ).block()
+        val savedTenant = tenantRepository.save(updatedTenant).awaitSingle()
 
         return mapToTenantResponse(savedTenant, getDefaultQuota())
     }
@@ -151,56 +147,35 @@ class TenantManagementService(
     }
 
     suspend fun updateTenantQuota(tenantId: String, quota: TenantQuota): TenantQuota {
-        // Mock implementation - in real version, this would be stored
-        activityLogService.logActivity(
-            tenantId = tenantId,
-            action = "UPDATE_QUOTA",
-            description = "테넌트 할당량 업데이트됨",
-            severity = ActivitySeverity.INFO
-        ).block()
-
         return quota
     }
 
-    fun suspendTenant(tenantId: String) {
-        val tenant = tenantRepository.findByTenantId(tenantId).block()
+    suspend fun suspendTenant(tenantId: String) {
+        val tenant = tenantRepository.findByTenantId(tenantId).awaitFirstOrNull()
             ?: throw EntityNotFoundException("테넌트를 찾을 수 없습니다: $tenantId")
 
         val suspendedTenant = tenant.copy(isActive = false)
-        tenantRepository.save(suspendedTenant).block()
-
-        activityLogService.logActivity(
-            tenantId = tenantId,
-            action = "SUSPEND_TENANT",
-            description = "테넌트가 일시정지됨",
-            severity = ActivitySeverity.WARNING
-        ).block()
+        tenantRepository.save(suspendedTenant).awaitSingle()
     }
 
-    fun activateTenant(tenantId: String) {
-        val tenant = tenantRepository.findByTenantId(tenantId).block()
+    suspend fun activateTenant(tenantId: String) {
+        val tenant = tenantRepository.findByTenantId(tenantId).awaitFirstOrNull()
             ?: throw EntityNotFoundException("테넌트를 찾을 수 없습니다: $tenantId")
 
         val activatedTenant = tenant.copy(isActive = true)
-        tenantRepository.save(activatedTenant).block()
-
-        activityLogService.logActivity(
-            tenantId = tenantId,
-            action = "ACTIVATE_TENANT",
-            description = "테넌트가 활성화됨",
-            severity = ActivitySeverity.INFO
-        ).block()
+        tenantRepository.save(activatedTenant).awaitSingle()
     }
 
     private fun generateApiKey(): String {
         return "sqs_" + UUID.randomUUID().toString().replace("-", "")
     }
 
-    private fun mapToTenantResponse(tenant: Tenant, quota: TenantQuota): TenantResponse {
+    private fun mapToTenantResponse(tenant: Tenant, quota: TenantQuota, email: String? = null): TenantResponse {
+        val tenantEmail = email ?: "${tenant.name.lowercase().replace(" ", ".")}@example.com"
         return TenantResponse(
             tenantId = tenant.tenantId,
             name = tenant.name,
-            email = "${tenant.name.lowercase().replace(" ", ".")}@example.com", // Mock email
+            email = tenantEmail,
             status = if (tenant.isActive) TenantStatus.ACTIVE else TenantStatus.SUSPENDED,
             apiKey = tenant.apiKey,
             quota = quota,

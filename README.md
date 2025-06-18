@@ -1,6 +1,6 @@
 # Simple Queue Service
 
-AWS SQS와 유사한 경량 메시지 큐 시스템
+경량 메시지 큐 시스템
 
 ## 🌟 주요 기능
 

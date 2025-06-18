@@ -173,7 +173,7 @@ class RedisMessageRepository(
         
         // available 큐에서 메시지 ID들을 가져와서 (제거하지 않고) 내용을 조회
         return redisTemplate.opsForList()
-            .range(queue.getAvailableKey(), 0, (maxMessages - 1).toLong())
+            .range(queue.getMessagesKey(), 0, (maxMessages - 1).toLong())
             .flatMap { messageId ->
                 getMessageDetails(messageId)
                     .map { message -> MessagePreview.fromMessage(message) }

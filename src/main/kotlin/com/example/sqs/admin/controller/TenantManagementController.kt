@@ -3,7 +3,6 @@ package com.example.sqs.admin.controller
 import com.example.sqs.admin.domain.*
 import com.example.sqs.admin.service.TenantManagementService
 import com.example.sqs.common.ApiResponse
-import com.example.sqs.common.exception.EntityNotFoundException
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.PageRequest
 import org.springframework.web.bind.annotation.*
@@ -14,7 +13,6 @@ import jakarta.validation.Valid
 class TenantManagementController(
     private val tenantManagementService: TenantManagementService
 ) {
-    
     /**
      * 테넌트 목록을 조회합니다.
      */
@@ -28,7 +26,7 @@ class TenantManagementController(
         val tenants = tenantManagementService.listTenants(pageRequest, status)
         return ApiResponse.success(tenants)
     }
-    
+
     /**
      * 테넌트를 생성합니다.
      */
@@ -39,7 +37,7 @@ class TenantManagementController(
         val tenant = tenantManagementService.createTenant(request)
         return ApiResponse.success(tenant)
     }
-    
+
     /**
      * 테넌트 정보를 조회합니다.
      */
@@ -50,7 +48,7 @@ class TenantManagementController(
         val tenant = tenantManagementService.getTenant(tenantId)
         return ApiResponse.success(tenant)
     }
-    
+
     /**
      * 테넌트 정보를 수정합니다.
      */
@@ -62,7 +60,7 @@ class TenantManagementController(
         val tenant = tenantManagementService.updateTenant(tenantId, request)
         return ApiResponse.success(tenant)
     }
-    
+
     /**
      * 테넌트를 삭제합니다.
      */
@@ -73,7 +71,7 @@ class TenantManagementController(
         tenantManagementService.deleteTenant(tenantId)
         return ApiResponse.success(Unit)
     }
-    
+
     /**
      * 테넌트의 API 키를 재설정합니다.
      */
@@ -84,7 +82,7 @@ class TenantManagementController(
         val tenant = tenantManagementService.resetApiKey(tenantId)
         return ApiResponse.success(tenant)
     }
-    
+
     /**
      * 테넌트의 사용량 정보를 조회합니다.
      */
@@ -95,7 +93,7 @@ class TenantManagementController(
         val usage = tenantManagementService.getTenantUsage(tenantId)
         return ApiResponse.success(usage)
     }
-    
+
     /**
      * 테넌트의 할당량 정보를 조회합니다.
      */
@@ -106,7 +104,7 @@ class TenantManagementController(
         val quota = tenantManagementService.getTenantQuota(tenantId)
         return ApiResponse.success(quota)
     }
-    
+
     /**
      * 테넌트의 할당량을 수정합니다.
      */
@@ -118,7 +116,7 @@ class TenantManagementController(
         val updatedQuota = tenantManagementService.updateTenantQuota(tenantId, quota)
         return ApiResponse.success(updatedQuota)
     }
-    
+
     /**
      * 테넌트를 일시 중지합니다.
      */
@@ -129,7 +127,7 @@ class TenantManagementController(
         tenantManagementService.suspendTenant(tenantId)
         return ApiResponse.success(Unit)
     }
-    
+
     /**
      * 테넌트를 활성화합니다.
      */
