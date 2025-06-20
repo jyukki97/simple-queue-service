@@ -2,6 +2,8 @@ package com.example.sqs.storage.service
 
 import com.example.sqs.message.domain.Message
 import com.example.sqs.storage.domain.StorageTier
+import com.example.sqs.storage.domain.BatchResult
+import com.example.sqs.storage.domain.StorageUsageInfo
 import com.example.sqs.storage.service.impl.*
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.runBlocking
@@ -67,8 +69,8 @@ class StorageServiceTest {
         val hotStorage = HotStorageService(redisTemplate, objectMapper)
         val warmStorage = WarmStorageService(redisTemplate, objectMapper)
         val coldStorage = ColdStorageService(objectMapper, "/tmp/test-cold-storage")
-        val tieringManager = TieringManagerServiceImpl(
-            hotStorage, warmStorage, coldStorage, redisTemplate, objectMapper
+        val tieringManager = TieringManagerService(
+            hotStorage, warmStorage, coldStorage, redisTemplate, objectMapper, 4
         )
         
         val unifiedStorage = UnifiedStorageService(

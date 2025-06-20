@@ -33,11 +33,17 @@ class MessageController(
         @PathVariable queueName: String,
         @RequestParam(defaultValue = "1") maxNumberOfMessages: Int,
         @RequestParam(defaultValue = "30") visibilityTimeoutSeconds: Int,
-        @RequestParam(defaultValue = "0") waitTimeSeconds: Int
+        @RequestParam(defaultValue = "0") waitTimeSeconds: Int,
+        @RequestParam(required = false) messageGroupId: String?
     ): Mono<ApiResponse<ReceiveMessageResponse>> {
-        logger.info("메시지 수신 요청: $queueName, maxMessages: $maxNumberOfMessages")
+        logger.info("메시지 수신 요청: $queueName, maxMessages: $maxNumberOfMessages, messageGroupId: $messageGroupId")
         val tenantId = AuthContext.getCurrentTenantId()
-        val request = ReceiveMessageRequest(maxNumberOfMessages, visibilityTimeoutSeconds, waitTimeSeconds)
+        val request = ReceiveMessageRequest(
+            maxNumberOfMessages = maxNumberOfMessages, 
+            visibilityTimeoutSeconds = visibilityTimeoutSeconds, 
+            waitTimeSeconds = waitTimeSeconds,
+            messageGroupId = messageGroupId
+        )
         return messageService.receiveMessages(tenantId, queueName, request)
             .collectList()
             .map { messages -> ApiResponse.success(ReceiveMessageResponse(messages)) }

@@ -51,10 +51,19 @@ app:
       ttl-hours: 1
       max-memory-usage-percent: 80
     warm:
+      # RocksDB 설정
+      rocksdb:
+        path: ${WARM_STORAGE_PATH:./data/warm}
+        max-open-files: 1000
+        write-buffer-size: 67108864  # 64MB
+        max-write-buffer-number: 3
+        level0-file-num-compaction-trigger: 4
+        target-file-size-base: 67108864  # 64MB
+        max-bytes-for-level-base: 268435456  # 256MB
       ttl-days: 1
       max-disk-usage-gb: 100
     cold:
-      base-path: ${COLD_STORAGE_PATH:/tmp/sqs-cold-storage}
+      base-path: ${COLD_STORAGE_PATH:./data/cold}
       compression-enabled: true
       encryption-enabled: false
       max-file-size-mb: 100

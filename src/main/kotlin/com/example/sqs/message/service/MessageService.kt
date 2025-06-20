@@ -7,6 +7,7 @@ import com.example.sqs.metrics.service.MetricsService
 import com.example.sqs.performance.compression.MessageCompressionService
 import com.example.sqs.performance.monitoring.PerformanceMonitoringService
 import com.example.sqs.performance.partitioning.QueuePartitioningService
+import com.example.sqs.queue.domain.Queue
 import com.example.sqs.queue.service.QueueService
 import com.example.sqs.tracing.service.MessageTraceService
 import org.springframework.stereotype.Service
@@ -35,12 +36,25 @@ class MessageService(
 
         return queueService.findQueue(tenantId, queueName)
             .flatMap { queue ->
+                // FIFO 큐 검증
+                if (queue.attributes.fifoQueue == true) {
+                    validateFifoMessage(request, queue)
+                }
+                
                 // 메시지 압축 처리
                 val (messageBody, compressed) = processMessageCompression(request.messageBody)
 
                 // 파티셔닝 적용
                 val targetQueueName = if (queueProperties.enablePartitioning) {
-                    val partitionNumber = getPartitionForMessage(request.messageBody)
+                    val partitionNumber = if (queue.attributes.fifoQueue == true) {
+                        // FIFO 큐에서는 MessageGroupId 기반으로 파티션 결정
+                        val messageGroupId = request.messageGroupId ?: request.attributes["MessageGroupId"]
+                            ?: throw IllegalStateException("FIFO 큐에서 MessageGroupId가 누락되었습니다")
+                        Math.abs(messageGroupId.hashCode()) % 4
+                    } else {
+                        // 표준 큐에서는 메시지 내용 기반으로 파티션 결정
+                        getPartitionForMessage(request.messageBody)
+                    }
                     partitioningService.getPartitionedQueueName(queueName, partitionNumber)
                 } else {
                     queueName
@@ -57,8 +71,48 @@ class MessageService(
                         put("_compressed", "true")
                         put("_original_size", request.messageBody.length.toString())
                     }
-                    put("_partition", targetQueueName)
+                    // FIFO 큐의 경우 MessageGroupId와 MessageDeduplicationId를 attributes에 명시적으로 설정
+                    if (queue.attributes.fifoQueue == true) {
+                        val messageGroupId = request.messageGroupId ?: request.attributes["MessageGroupId"]
+                        val messageDeduplicationId = request.messageDeduplicationId ?: request.attributes["MessageDeduplicationId"]
+                        
+                        if (!messageGroupId.isNullOrBlank()) {
+                            put("MessageGroupId", messageGroupId)
+                        }
+                        if (!messageDeduplicationId.isNullOrBlank()) {
+                            put("MessageDeduplicationId", messageDeduplicationId)
+                        }
+                    }
                 }
+
+                // 임시 메시지 생성 (파티션 계산용)
+                val tempMessage = Message(
+                    tenantId = tenantId,
+                    queueName = targetQueueName,
+                    messageBody = messageBody,
+                    attributes = enhancedAttributes,
+                    sentTimestamp = Instant.now(),
+                    visibleAt = visibleAt,
+                    delaySeconds = request.delaySeconds,
+                    messageGroupId = request.messageGroupId ?: request.attributes["MessageGroupId"],
+                    messageDeduplicationId = request.messageDeduplicationId ?: request.attributes["MessageDeduplicationId"]
+                )
+
+                // 파티션 번호 계산
+                val partitionNumber = if (queue.attributes.fifoQueue == true) {
+                    val messageGroupId = tempMessage.messageGroupId 
+                        ?: tempMessage.attributes["MessageGroupId"]
+                        ?: throw IllegalStateException("FIFO 큐에서 MessageGroupId가 누락되었습니다")
+                    Math.abs(messageGroupId.hashCode()) % 4 // partitionCount 하드코딩 대신 설정값 사용해야 함
+                } else {
+                    val groupId = tempMessage.messageGroupId 
+                        ?: tempMessage.attributes["MessageGroupId"] 
+                        ?: tempMessage.messageId
+                    Math.abs(groupId.hashCode()) % 4 // partitionCount 하드코딩 대신 설정값 사용해야 함
+                }
+
+                // 실제 파티션 정보를 attributes에 추가 (targetQueueName이 이미 파티션 정보 포함하므로 그대로 사용)
+                enhancedAttributes["_partition"] = targetQueueName
 
                 val message = Message(
                     tenantId = tenantId,
@@ -67,7 +121,10 @@ class MessageService(
                     attributes = enhancedAttributes,
                     sentTimestamp = Instant.now(),
                     visibleAt = visibleAt,
-                    delaySeconds = request.delaySeconds
+                    delaySeconds = request.delaySeconds,
+                    // FIFO Queue specific fields
+                    messageGroupId = request.messageGroupId ?: request.attributes["MessageGroupId"],
+                    messageDeduplicationId = request.messageDeduplicationId ?: request.attributes["MessageDeduplicationId"]
                 )
 
                 // 통합된 메시지 서비스 사용 (FIFO/Standard 구분 없이)
@@ -133,7 +190,15 @@ class MessageService(
                 // 배치 처리를 위한 메시지 그룹핑 (파티션별)
                 val messagesByPartition = if (queueProperties.enablePartitioning) {
                     request.messages.groupBy { batchRequest ->
-                        getPartitionForMessage(batchRequest.messageBody)
+                        if (queue.attributes.fifoQueue == true) {
+                            // FIFO 큐에서는 MessageGroupId 기반으로 파티션 결정
+                            val messageGroupId = batchRequest.messageGroupId ?: batchRequest.attributes["MessageGroupId"]
+                                ?: throw IllegalStateException("FIFO 큐에서 MessageGroupId가 누락되었습니다")
+                            Math.abs(messageGroupId.hashCode()) % 4
+                        } else {
+                            // 표준 큐에서는 메시지 내용 기반으로 파티션 결정
+                            getPartitionForMessage(batchRequest.messageBody)
+                        }
                     }
                 } else {
                     mapOf(0 to request.messages)
@@ -182,8 +247,20 @@ class MessageService(
     fun receiveMessages(tenantId: String, queueName: String, request: ReceiveMessageRequest): Flux<MessageResponse> {
         return queueService.findQueue(tenantId, queueName)
             .flatMapMany { queue ->
+                // FIFO 큐에서는 MessageGroupId가 필수
+                if (queue.attributes.fifoQueue == true && request.messageGroupId.isNullOrBlank()) {
+                    return@flatMapMany Flux.error<MessageResponse>(
+                        IllegalArgumentException("FIFO 큐에서는 메시지 수신 시 MessageGroupId가 필수입니다")
+                    )
+                }
+                
                 // 통합된 메시지 서비스 사용 (FIFO/Standard 구분 없이)
-                val messageFlux = unifiedMessageService.receiveMessages(queue, request.maxNumberOfMessages, request.visibilityTimeoutSeconds)
+                val messageFlux = unifiedMessageService.receiveMessages(
+                    queue = queue, 
+                    maxMessages = request.maxNumberOfMessages, 
+                    visibilityTimeoutSeconds = request.visibilityTimeoutSeconds,
+                    messageGroupId = request.messageGroupId
+                )
 
                 messageFlux.flatMap { message ->
                     // 메트릭 기록 (처리 시간은 임의로 계산)
@@ -378,6 +455,46 @@ class MessageService(
                         enhancedAttributes["_compressed"] = "true"
                         enhancedAttributes["_original_size"] = batchRequest.messageBody.length.toString()
                     }
+                    
+                    // FIFO 큐의 경우 MessageGroupId와 MessageDeduplicationId를 attributes에 명시적으로 설정
+                    if (queue.attributes.fifoQueue == true) {
+                        val messageGroupId = batchRequest.messageGroupId ?: batchRequest.attributes["MessageGroupId"]
+                        val messageDeduplicationId = batchRequest.messageDeduplicationId ?: batchRequest.attributes["MessageDeduplicationId"]
+                        
+                        if (!messageGroupId.isNullOrBlank()) {
+                            enhancedAttributes["MessageGroupId"] = messageGroupId
+                        }
+                        if (!messageDeduplicationId.isNullOrBlank()) {
+                            enhancedAttributes["MessageDeduplicationId"] = messageDeduplicationId
+                        }
+                    }
+
+                    // 임시 메시지 생성 (파티션 계산용)
+                    val tempMessage = Message(
+                        tenantId = tenantId,
+                        queueName = targetQueueName,
+                        messageBody = messageBody,
+                        attributes = enhancedAttributes,
+                        sentTimestamp = Instant.now(),
+                        visibleAt = visibleAt,
+                        messageGroupId = batchRequest.messageGroupId ?: batchRequest.attributes["MessageGroupId"],
+                        messageDeduplicationId = batchRequest.messageDeduplicationId ?: batchRequest.attributes["MessageDeduplicationId"]
+                    )
+
+                    // 파티션 번호 계산
+                    val partitionNumber = if (queue.attributes.fifoQueue == true) {
+                        val messageGroupId = tempMessage.messageGroupId 
+                            ?: tempMessage.attributes["MessageGroupId"]
+                            ?: throw IllegalStateException("FIFO 큐에서 MessageGroupId가 누락되었습니다")
+                        Math.abs(messageGroupId.hashCode()) % 4 // partitionCount 하드코딩 대신 설정값 사용해야 함
+                    } else {
+                        val groupId = tempMessage.messageGroupId 
+                            ?: tempMessage.attributes["MessageGroupId"] 
+                            ?: tempMessage.messageId
+                        Math.abs(groupId.hashCode()) % 4 // partitionCount 하드코딩 대신 설정값 사용해야 함
+                    }
+
+                    // 실제 파티션 정보를 attributes에 추가 (targetQueueName이 이미 파티션 정보 포함하므로 그대로 사용)
                     enhancedAttributes["_partition"] = targetQueueName
 
                     val message = Message(
@@ -386,7 +503,10 @@ class MessageService(
                         messageBody = messageBody,
                         attributes = enhancedAttributes,
                         sentTimestamp = Instant.now(),
-                        visibleAt = visibleAt
+                        visibleAt = visibleAt,
+                        // FIFO Queue specific fields
+                        messageGroupId = batchRequest.messageGroupId ?: batchRequest.attributes["MessageGroupId"],
+                        messageDeduplicationId = batchRequest.messageDeduplicationId ?: batchRequest.attributes["MessageDeduplicationId"]
                     )
 
                     messageRepository.sendMessage(queue, message)
@@ -440,5 +560,47 @@ class MessageService(
                 }
             }
             .then()
+    }
+
+    /**
+     * FIFO 큐 메시지 검증
+     */
+    private fun validateFifoMessage(request: SendMessageRequest, queue: Queue) {
+        // MessageGroupId는 FIFO 큐에서 필수 (request 필드 또는 attributes에서 확인)
+        val messageGroupId = request.messageGroupId 
+            ?: request.attributes["MessageGroupId"]
+        if (messageGroupId.isNullOrBlank()) {
+            throw IllegalArgumentException("FIFO 큐에서는 MessageGroupId가 필수입니다")
+        }
+        
+        // MessageGroupId 길이 검증 (최대 128자)
+        if (messageGroupId.length > 128) {
+            throw IllegalArgumentException("MessageGroupId는 128자를 초과할 수 없습니다")
+        }
+        
+        // MessageGroupId는 영숫자, 하이픈, 언더스코어만 허용
+        if (!messageGroupId.matches(Regex("^[a-zA-Z0-9_-]+$"))) {
+            throw IllegalArgumentException("MessageGroupId는 영숫자, 하이픈(-), 언더스코어(_)만 포함할 수 있습니다")
+        }
+        
+        // ContentBasedDeduplication이 비활성화된 경우 MessageDeduplicationId 필수
+        val contentBasedDeduplication = queue.attributes.contentBasedDeduplication ?: false
+        if (!contentBasedDeduplication) {
+            val messageDeduplicationId = request.messageDeduplicationId 
+                ?: request.attributes["MessageDeduplicationId"]
+            if (messageDeduplicationId.isNullOrBlank()) {
+                throw IllegalArgumentException("ContentBasedDeduplication이 비활성화된 FIFO 큐에서는 MessageDeduplicationId가 필수입니다")
+            }
+            
+            // MessageDeduplicationId 길이 검증 (최대 128자)
+            if (messageDeduplicationId.length > 128) {
+                throw IllegalArgumentException("MessageDeduplicationId는 128자를 초과할 수 없습니다")
+            }
+            
+            // MessageDeduplicationId는 영숫자, 하이픈, 언더스코어만 허용
+            if (!messageDeduplicationId.matches(Regex("^[a-zA-Z0-9_-]+$"))) {
+                throw IllegalArgumentException("MessageDeduplicationId는 영숫자, 하이픈(-), 언더스코어(_)만 포함할 수 있습니다")
+            }
+        }
     }
 }

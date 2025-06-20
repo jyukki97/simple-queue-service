@@ -6,7 +6,9 @@ import com.example.sqs.storage.domain.FifoTieringPolicy
 import com.example.sqs.storage.domain.StandardTieringPolicy
 import com.example.sqs.storage.domain.TierStats
 import com.example.sqs.storage.domain.TieringPolicy
+import com.example.sqs.storage.dto.BatchMoveResult
 import com.example.sqs.storage.service.StorageStatsService
+import com.example.sqs.storage.service.WarmTierManagerService
 import org.slf4j.LoggerFactory
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.scheduling.annotation.Scheduled
@@ -20,7 +22,8 @@ class TieringScheduler(
     private val queueRepository: QueueRepository,
     private val fifoTieringPolicy: FifoTieringPolicy,
     private val standardTieringPolicy: StandardTieringPolicy,
-    private val storageStatsService: StorageStatsService
+    private val storageStatsService: StorageStatsService,
+    private val warmTierManagerService: WarmTierManagerService
 ) {
 
     private val logger = LoggerFactory.getLogger(TieringScheduler::class.java)
@@ -112,22 +115,34 @@ class TieringScheduler(
     ): Mono<String> {
         val operations = mutableListOf<Mono<String>>()
 
-        // Hot → Warm 이동
+        // Hot → Warm 이동 (새로운 RocksDB WARM 계층 사용)
         if (policy.shouldMoveHotToWarm(hotStats)) {
             logger.info("$queueType Hot→Warm 이동 시작: ${queue.queueName}")
             val moveOperation = policy.getMessagesToMoveHotToWarm(queue, hotStats)
-                .flatMap { messageId ->
-                    storageStatsService.moveMessage(messageId, "HOT", "WARM", queue)
-                        .doOnSuccess {
-                            logger.debug("$queueType 메시지 이동 완료: $messageId (HOT→WARM)")
-                        }
+                .collectList()
+                .flatMap { messageIds ->
+                    if (messageIds.isNotEmpty()) {
+                        logger.info("$queueType Hot→Warm 이동 대상: ${messageIds.size}개 메시지")
+                        // 새로운 RocksDB WARM 계층으로 배치 이동
+                        warmTierManagerService.moveMessagesToWarmBatch(messageIds, queue.tenantId, queue.queueName)
+                            .defaultIfEmpty(BatchMoveResult(0, 0, 0, listOf("결과가 null입니다")))
+                            .doOnSuccess { result ->
+                                if (result != null) {
+                                    logger.info("$queueType Hot→Warm 배치 이동 완료: ${queue.queueName}")
+                                    logger.info("  - 성공: ${result.successCount}개")
+                                    logger.info("  - 실패: ${result.failCount}개")
+                                    if (result.errors.isNotEmpty()) {
+                                        logger.warn("  - 오류: ${result.errors}")
+                                    }
+                                } else {
+                                    logger.warn("$queueType Hot→Warm 배치 이동 결과가 null입니다: ${queue.queueName}")
+                                }
+                            }
+                            .map { result -> "$queueType Hot→Warm: ${result?.successCount ?: 0}/${result?.totalRequested ?: 0} 메시지 이동 완료" }
+                    } else {
+                        Mono.just("$queueType Hot→Warm: 이동할 메시지 없음")
+                    }
                 }
-                .count()
-                .doOnNext { count ->
-                    logger.info("$queueType Hot→Warm 이동 완료: ${queue.queueName}, 이동된 메시지: $count")
-                    // TODO: 메트릭 기록 추가
-                }
-                .map { count -> "$queueType Hot→Warm: $count 메시지 이동" }
 
             operations.add(moveOperation)
         }
@@ -158,6 +173,29 @@ class TieringScheduler(
             }
         } else {
             Mono.just("$queueType 계층화 조건 미충족: ${queue.queueName}")
+        }
+    }
+
+    /**
+     * 1시간마다 WARM 계층 만료된 메시지 정리
+     */
+    @Scheduled(fixedDelayString = "\${app.storage.warm.cleanup-interval-seconds:3600}000")
+    fun cleanupWarmExpiredMessages() {
+        logger.info("WARM 계층 만료 메시지 정리 시작")
+
+        try {
+            warmTierManagerService.cleanupExpiredMessages()
+                .subscribeOn(Schedulers.boundedElastic())
+                .subscribe(
+                    { count ->
+                        logger.info("WARM 계층 만료 메시지 정리 완료: $count 개")
+                    },
+                    { error ->
+                        logger.error("WARM 계층 만료 메시지 정리 중 오류 발생", error)
+                    }
+                )
+        } catch (e: Exception) {
+            logger.error("WARM 계층 정리 스케줄러 실행 중 예외 발생", e)
         }
     }
 }

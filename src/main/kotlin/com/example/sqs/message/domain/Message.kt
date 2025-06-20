@@ -14,25 +14,27 @@ data class Message(
     val sentTimestamp: Instant,
     val firstReceiveTimestamp: Instant? = null,
     val receiveCount: Int = 0,
-    val visibleAt: Instant,
+    val visibleAt: Instant = Instant.now(),
     val receiptHandle: String? = null,
-    val delaySeconds: Int = 0
+    val delaySeconds: Int = 0,
+    // FIFO Queue specific fields
+    val messageGroupId: String? = null,
+    val messageDeduplicationId: String? = null,
+    val sequenceNumber: String? = null
 ) {
     init {
         require(messageBody.toByteArray().size <= 262144) { "메시지 크기는 256KB를 초과할 수 없습니다" }
         require(tenantId.isNotBlank()) { "테넌트 ID는 비어있을 수 없습니다" }
         require(queueName.isNotBlank()) { "큐 이름은 비어있을 수 없습니다" }
     }
-    
+
     fun getMessageKey(): String = "message:${messageId}"
-    
-    fun isVisible(now: Instant = Instant.now()): Boolean = visibleAt <= now
-    
+
     fun withIncrementedReceiveCount(): Message = copy(
         receiveCount = receiveCount + 1,
         firstReceiveTimestamp = firstReceiveTimestamp ?: Instant.now()
     )
-    
+
     fun withNewReceiptHandle(handle: String, visibilityTimeout: Int): Message = copy(
         receiptHandle = handle,
         visibleAt = Instant.now().plusSeconds(visibilityTimeout.toLong())
@@ -43,7 +45,10 @@ data class Message(
 data class SendMessageRequest(
     val messageBody: String,
     val delaySeconds: Int = 0,
-    val attributes: Map<String, String> = emptyMap()
+    val attributes: Map<String, String> = emptyMap(),
+    // FIFO Queue specific fields
+    val messageGroupId: String? = null,
+    val messageDeduplicationId: String? = null
 ) {
     init {
         require(messageBody.isNotBlank()) { "메시지 본문은 비어있을 수 없습니다" }
@@ -60,7 +65,10 @@ data class BatchMessageRequest(
     val id: String,
     val messageBody: String,
     val delaySeconds: Int = 0,
-    val attributes: Map<String, String> = emptyMap()
+    val attributes: Map<String, String> = emptyMap(),
+    // FIFO Queue specific fields
+    val messageGroupId: String? = null,
+    val messageDeduplicationId: String? = null
 )
 
 data class SendMessageBatchRequest(
@@ -75,7 +83,9 @@ data class SendMessageBatchRequest(
 data class ReceiveMessageRequest(
     val maxNumberOfMessages: Int = 1,
     val visibilityTimeoutSeconds: Int? = null,
-    val waitTimeSeconds: Int = 0
+    val waitTimeSeconds: Int = 0,
+    // FIFO Queue specific - receive messages from specific Message Group
+    val messageGroupId: String? = null
 ) {
     init {
         require(maxNumberOfMessages in 1..10) { "최대 메시지 수는 1~10개 사이여야 합니다" }

@@ -31,17 +31,26 @@ const QueueManagement: React.FC = () => {
     messageRetentionPeriod: 1209600,
     delaySeconds: 0,
     maxReceiveCount: 3,
-    fifoQueue: false
+    fifoQueue: false,
+    contentBasedDeduplication: false
   });
   const [newMessage, setNewMessage] = useState({
     messageBody: '',
     delaySeconds: 0,
-    attributes: {}
+    attributes: {},
+    messageGroupId: '',
+    messageDeduplicationId: ''
   });
   const [bulkMessages, setBulkMessages] = useState([
-    { id: '1', messageBody: '', delaySeconds: 0, attributes: {} },
-    { id: '2', messageBody: '', delaySeconds: 0, attributes: {} }
+    { id: '1', messageBody: '', delaySeconds: 0, attributes: {}, messageGroupId: '', messageDeduplicationId: '' },
+    { id: '2', messageBody: '', delaySeconds: 0, attributes: {}, messageGroupId: '', messageDeduplicationId: '' }
   ]);
+  const [receiveRequest, setReceiveRequest] = useState({
+    maxNumberOfMessages: 1,
+    visibilityTimeoutSeconds: 30,
+    waitTimeSeconds: 0,
+    messageGroupId: ''
+  });
 
   useEffect(() => {
     fetchQueues();
@@ -101,7 +110,8 @@ const QueueManagement: React.FC = () => {
           messageRetentionPeriod: newQueue.messageRetentionPeriod,
           delaySeconds: newQueue.delaySeconds,
           maxReceiveCount: newQueue.maxReceiveCount,
-          fifoQueue: newQueue.fifoQueue
+          fifoQueue: newQueue.fifoQueue,
+          contentBasedDeduplication: newQueue.contentBasedDeduplication
         }
       };
       
@@ -113,7 +123,8 @@ const QueueManagement: React.FC = () => {
         messageRetentionPeriod: 1209600,
         delaySeconds: 0,
         maxReceiveCount: 3,
-        fifoQueue: false
+        fifoQueue: false,
+        contentBasedDeduplication: false
       });
       await fetchQueues(); // 목록 새로고침
     } catch (error) {
@@ -136,18 +147,32 @@ const QueueManagement: React.FC = () => {
 
   const handleSendMessage = async (queueName: string) => {
     try {
+      const queue = queues.find(q => q.queueName === queueName);
+      
       const request: SendMessageRequest = {
         messageBody: newMessage.messageBody,
         delaySeconds: newMessage.delaySeconds,
-        attributes: newMessage.attributes
+        attributes: newMessage.attributes,
+        messageGroupId: newMessage.messageGroupId || undefined,
+        messageDeduplicationId: newMessage.messageDeduplicationId || undefined
       };
+      
+      // FIFO 큐이고 ContentBasedDeduplication이 false이면 MessageDeduplicationId 필수
+      if (queue?.attributes.fifoQueue && !queue.attributes.contentBasedDeduplication) {
+        if (!request.messageDeduplicationId || request.messageDeduplicationId.trim() === '') {
+          // 자동으로 UUID 생성
+          request.messageDeduplicationId = `auto-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        }
+      }
       
       await queueService.sendMessage(queueName, request);
       setShowMessageForm(null);
       setNewMessage({
         messageBody: '',
         delaySeconds: 0,
-        attributes: {}
+        attributes: {},
+        messageGroupId: '',
+        messageDeduplicationId: ''
       });
       await fetchQueues(); // 통계 새로고침
     } catch (error) {
@@ -157,14 +182,30 @@ const QueueManagement: React.FC = () => {
 
   const handleSendBulkMessages = async (queueName: string) => {
     try {
+      const queue = queues.find(q => q.queueName === queueName);
       const filteredMessages = bulkMessages.filter(msg => msg.messageBody.trim() !== '');
+      
       if (filteredMessages.length === 0) {
         setError('전송할 메시지가 없습니다.');
         return;
       }
 
+      // FIFO 큐이고 ContentBasedDeduplication이 false이면 MessageDeduplicationId 필수이므로 자동 생성
+      const processedMessages = filteredMessages.map(msg => {
+        const processedMsg = { ...msg };
+        
+        if (queue?.attributes.fifoQueue && !queue.attributes.contentBasedDeduplication) {
+          if (!processedMsg.messageDeduplicationId || processedMsg.messageDeduplicationId.trim() === '') {
+            // 자동으로 UUID 생성
+            processedMsg.messageDeduplicationId = `auto-${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${msg.id}`;
+          }
+        }
+        
+        return processedMsg;
+      });
+
       const request: SendMessageBatchRequest = {
-        messages: filteredMessages
+        messages: processedMessages
       };
       
       const response = await queueService.sendMessageBatch(queueName, request);
@@ -177,8 +218,8 @@ const QueueManagement: React.FC = () => {
       
       setShowBulkMessageForm(null);
       setBulkMessages([
-        { id: '1', messageBody: '', delaySeconds: 0, attributes: {} },
-        { id: '2', messageBody: '', delaySeconds: 0, attributes: {} }
+        { id: '1', messageBody: '', delaySeconds: 0, attributes: {}, messageGroupId: '', messageDeduplicationId: '' },
+        { id: '2', messageBody: '', delaySeconds: 0, attributes: {}, messageGroupId: '', messageDeduplicationId: '' }
       ]);
       await fetchQueues(); // 통계 새로고침
     } catch (error) {
@@ -198,10 +239,19 @@ const QueueManagement: React.FC = () => {
 
   const handleReceiveMessages = async (queueName: string) => {
     try {
-      const response = await queueService.receiveMessages(queueName, {
-        maxNumberOfMessages: 10,
-        visibilityTimeoutSeconds: 30
-      });
+      const queue = queues.find(q => q.queueName === queueName);
+      const requestParams: any = {
+        maxNumberOfMessages: receiveRequest.maxNumberOfMessages,
+        visibilityTimeoutSeconds: receiveRequest.visibilityTimeoutSeconds,
+        waitTimeSeconds: receiveRequest.waitTimeSeconds
+      };
+      
+      // FIFO 큐인 경우 messageGroupId 추가
+      if (queue?.attributes.fifoQueue && receiveRequest.messageGroupId) {
+        requestParams.messageGroupId = receiveRequest.messageGroupId;
+      }
+      
+      const response = await queueService.receiveMessages(queueName, requestParams);
       setReceivedMessages(response.messages);
       setShowReceiveModal(queueName);
       await fetchQueues(); // 통계 새로고침
@@ -223,7 +273,7 @@ const QueueManagement: React.FC = () => {
 
   const addBulkMessage = () => {
     const newId = (bulkMessages.length + 1).toString();
-    setBulkMessages([...bulkMessages, { id: newId, messageBody: '', delaySeconds: 0, attributes: {} }]);
+    setBulkMessages([...bulkMessages, { id: newId, messageBody: '', delaySeconds: 0, attributes: {}, messageGroupId: '', messageDeduplicationId: '' }]);
   };
 
   const removeBulkMessage = (id: string) => {
@@ -255,8 +305,9 @@ const QueueManagement: React.FC = () => {
     setShowStatsModal(queueName);
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('ko-KR', {
+  const formatDate = (dateValue: string | number) => {
+    const date = typeof dateValue === 'number' ? new Date(dateValue) : new Date(dateValue);
+    return date.toLocaleDateString('ko-KR', {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
@@ -367,6 +418,23 @@ const QueueManagement: React.FC = () => {
                 </label>
               </div>
 
+              {/* FIFO 큐 전용 옵션들 */}
+              {newQueue.fifoQueue && (
+                <div className="form-group checkbox-group">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={newQueue.contentBasedDeduplication}
+                      onChange={(e) => setNewQueue({...newQueue, contentBasedDeduplication: e.target.checked})}
+                    />
+                    Content-Based Deduplication
+                  </label>
+                  <small style={{color: '#6b7280', fontSize: '0.75rem', display: 'block', marginTop: '0.25rem'}}>
+                    활성화하면 메시지 내용을 기반으로 자동 중복 제거. 비활성화하면 MessageDeduplicationId가 필수입니다.
+                  </small>
+                </div>
+              )}
+
               <div className="form-actions">
                 <button type="submit" className="submit-btn">생성</button>
                 <button 
@@ -421,6 +489,38 @@ const QueueManagement: React.FC = () => {
                   </small>
                 </div>
 
+                {/* FIFO 큐용 필드들 */}
+                {queues.find(q => q.queueName === showMessageForm)?.attributes.fifoQueue && (
+                  <>
+                    <div className="form-group">
+                      <label>🏷️ Message Group ID:</label>
+                      <input
+                        type="text"
+                        value={newMessage.messageGroupId}
+                        onChange={(e) => setNewMessage({...newMessage, messageGroupId: e.target.value})}
+                        placeholder="메시지 그룹 ID를 입력하세요"
+                        required
+                      />
+                      <small style={{color: '#6b7280', fontSize: '0.75rem'}}>
+                        FIFO 큐에서는 필수입니다. 같은 그룹의 메시지는 순서가 보장됩니다.
+                      </small>
+                    </div>
+                    
+                    <div className="form-group">
+                      <label>🔑 Message Deduplication ID (선택사항):</label>
+                      <input
+                        type="text"
+                        value={newMessage.messageDeduplicationId}
+                        onChange={(e) => setNewMessage({...newMessage, messageDeduplicationId: e.target.value})}
+                        placeholder="중복 제거 ID를 입력하세요"
+                      />
+                      <small style={{color: '#6b7280', fontSize: '0.75rem'}}>
+                        중복 메시지 방지용. 비워두면 자동으로 고유 ID가 생성됩니다.
+                      </small>
+                    </div>
+                  </>
+                )}
+
                 <div className="form-actions">
                   <button type="submit" className="submit-btn">📤 전송</button>
                   <button 
@@ -474,6 +574,39 @@ const QueueManagement: React.FC = () => {
                         rows={3}
                         required
                       />
+                      
+                      {/* FIFO 큐용 필드들 */}
+                      {queues.find(q => q.queueName === showBulkMessageForm)?.attributes.fifoQueue && (
+                        <div style={{marginTop: '0.5rem'}}>
+                          <div style={{display: 'flex', gap: '0.5rem'}}>
+                            <div style={{flex: 1}}>
+                              <label style={{display: 'block', fontSize: '0.75rem', color: '#6b7280', marginBottom: '0.25rem'}}>
+                                Message Group ID:
+                              </label>
+                              <input
+                                type="text"
+                                value={msg.messageGroupId || ''}
+                                onChange={(e) => updateBulkMessage(msg.id, 'messageGroupId', e.target.value)}
+                                placeholder="그룹 ID"
+                                style={{width: '100%', fontSize: '0.75rem'}}
+                                required
+                              />
+                            </div>
+                            <div style={{flex: 1}}>
+                              <label style={{display: 'block', fontSize: '0.75rem', color: '#6b7280', marginBottom: '0.25rem'}}>
+                                Deduplication ID:
+                              </label>
+                              <input
+                                type="text"
+                                value={msg.messageDeduplicationId || ''}
+                                onChange={(e) => updateBulkMessage(msg.id, 'messageDeduplicationId', e.target.value)}
+                                placeholder="중복 제거 ID (비워두면 자동 생성)"
+                                style={{width: '100%', fontSize: '0.75rem'}}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                   <button 
@@ -528,6 +661,9 @@ const QueueManagement: React.FC = () => {
                       <div className="message-meta">
                         <span>전송 시간: {formatDate(message.sentTimestamp)}</span>
                         <span>수신 횟수: {message.receiveCount}</span>
+                        {message.messageGroupId && (
+                          <span>Group ID: {message.messageGroupId}</span>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -555,50 +691,128 @@ const QueueManagement: React.FC = () => {
         <div className="modal-overlay">
           <div className="modal">
             <div className="modal-header">
-              <h2>{showReceiveModal} 메시지 수신</h2>
+              <h2>{showReceiveModal.includes('-settings') ? 
+                `${showReceiveModal.replace('-settings', '')} 메시지 수신 설정` : 
+                `${showReceiveModal} 메시지 수신`}
+              </h2>
             </div>
             
-            <div className="messages-content">
-              {receivedMessages.length > 0 ? (
-                <div className="messages-list">
-                  {receivedMessages.map((message, index) => (
-                    <div key={message.messageId} className="message-item received">
-                      <div className="message-header">
-                        <strong>수신된 메시지 #{index + 1}</strong>
-                        <span className="message-id">{message.messageId}</span>
+            {showReceiveModal.includes('-settings') ? (
+              // FIFO 큐 수신 설정 화면
+              <div className="modal-content">
+                <form onSubmit={(e) => {
+                  e.preventDefault();
+                  const queueName = showReceiveModal.replace('-settings', '');
+                  handleReceiveMessages(queueName);
+                }}>
+                  <div className="form-group">
+                    <label>🔢 최대 메시지 수:</label>
+                    <input
+                      type="number"
+                      value={receiveRequest.maxNumberOfMessages}
+                      onChange={(e) => setReceiveRequest({...receiveRequest, maxNumberOfMessages: parseInt(e.target.value)})}
+                      min="1"
+                      max="10"
+                    />
+                  </div>
+                  
+                  <div className="form-group">
+                    <label>⏰ 가시성 타임아웃 (초):</label>
+                    <input
+                      type="number"
+                      value={receiveRequest.visibilityTimeoutSeconds}
+                      onChange={(e) => setReceiveRequest({...receiveRequest, visibilityTimeoutSeconds: parseInt(e.target.value)})}
+                      min="0"
+                      max="43200"
+                    />
+                  </div>
+                  
+                  <div className="form-group">
+                    <label>⌛ 대기 시간 (초):</label>
+                    <input
+                      type="number"
+                      value={receiveRequest.waitTimeSeconds}
+                      onChange={(e) => setReceiveRequest({...receiveRequest, waitTimeSeconds: parseInt(e.target.value)})}
+                      min="0"
+                      max="20"
+                    />
+                  </div>
+                  
+                  <div className="form-group">
+                    <label>🏷️ Message Group ID (FIFO 필수):</label>
+                    <input
+                      type="text"
+                      value={receiveRequest.messageGroupId}
+                      onChange={(e) => setReceiveRequest({...receiveRequest, messageGroupId: e.target.value})}
+                      placeholder="메시지 그룹 ID를 입력하세요"
+                      required
+                    />
+                    <small style={{color: '#6b7280', fontSize: '0.75rem'}}>
+                      해당 그룹의 메시지만 수신됩니다.
+                    </small>
+                  </div>
+                  
+                  <div className="form-actions">
+                    <button type="submit" className="submit-btn">📥 수신 시작</button>
+                    <button 
+                      type="button" 
+                      className="cancel-btn"
+                      onClick={() => setShowReceiveModal(null)}
+                    >
+                      취소
+                    </button>
+                  </div>
+                </form>
+              </div>
+            ) : (
+              // 수신된 메시지 표시 화면
+              <div className="messages-content">
+                {receivedMessages.length > 0 ? (
+                  <div className="messages-list">
+                    {receivedMessages.map((message, index) => (
+                      <div key={message.messageId} className="message-item received">
+                        <div className="message-header">
+                          <strong>수신된 메시지 #{index + 1}</strong>
+                          <span className="message-id">{message.messageId}</span>
+                        </div>
+                        <div className="message-body">
+                          <pre>{message.messageBody}</pre>
+                        </div>
+                        <div className="message-meta">
+                          <span>전송 시간: {formatDate(message.sentTimestamp)}</span>
+                          <span>Receipt Handle: {message.receiptHandle.substring(0, 8)}...</span>
+                          {message.messageGroupId && (
+                            <span>Group ID: {message.messageGroupId}</span>
+                          )}
+                        </div>
+                        <div className="message-actions">
+                          <button 
+                            className="delete-message-btn"
+                            onClick={() => handleDeleteMessage(showReceiveModal, message.receiptHandle)}
+                          >
+                            🗑️ 삭제
+                          </button>
+                        </div>
                       </div>
-                      <div className="message-body">
-                        <pre>{message.messageBody}</pre>
-                      </div>
-                      <div className="message-meta">
-                        <span>전송 시간: {formatDate(message.sentTimestamp)}</span>
-                        <span>Receipt Handle: {message.receiptHandle.substring(0, 8)}...</span>
-                      </div>
-                      <div className="message-actions">
-                        <button 
-                          className="delete-message-btn"
-                          onClick={() => handleDeleteMessage(showReceiveModal, message.receiptHandle)}
-                        >
-                          🗑️ 삭제
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p>수신된 메시지가 없습니다.</p>
-              )}
-            </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p>수신된 메시지가 없습니다.</p>
+                )}
+              </div>
+            )}
             
-            <div className="form-actions">
-              <button 
-                type="button" 
-                className="cancel-btn"
-                onClick={() => setShowReceiveModal(null)}
-              >
-                닫기
-              </button>
-            </div>
+            {!showReceiveModal.includes('-settings') && (
+              <div className="form-actions">
+                <button 
+                  type="button" 
+                  className="cancel-btn"
+                  onClick={() => setShowReceiveModal(null)}
+                >
+                  닫기
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -749,7 +963,16 @@ const QueueManagement: React.FC = () => {
               </button>
               <button 
                 className="action-btn"
-                onClick={() => handleReceiveMessages(queue.queueName)}
+                onClick={() => {
+                  const currentQueue = queues.find(q => q.queueName === queue.queueName);
+                  if (currentQueue?.attributes.fifoQueue) {
+                    // FIFO 큐인 경우 수신 설정 모달 먼저 표시
+                    setShowReceiveModal(`${queue.queueName}-settings`);
+                  } else {
+                    // 일반 큐인 경우 바로 수신
+                    handleReceiveMessages(queue.queueName);
+                  }
+                }}
               >
                 📥 메시지 수신
               </button>

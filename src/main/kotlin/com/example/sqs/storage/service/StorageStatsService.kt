@@ -1,6 +1,7 @@
 package com.example.sqs.storage.service
 
 import com.example.sqs.common.util.MessageParsingUtils
+import com.example.sqs.message.domain.Message
 import com.example.sqs.performance.partitioning.QueuePartitioningService
 import com.example.sqs.queue.domain.Queue
 import com.example.sqs.storage.domain.MessageLocation
@@ -8,7 +9,11 @@ import com.example.sqs.storage.domain.StorageTier
 import com.example.sqs.storage.domain.TierStats
 import com.example.sqs.storage.dto.PromoteResult
 import com.example.sqs.storage.dto.TierMessageInfo
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.context.ApplicationContext
+import org.springframework.context.annotation.Lazy
 import org.springframework.data.redis.core.ReactiveRedisTemplate
 import org.springframework.stereotype.Service
 import reactor.core.publisher.Flux
@@ -18,7 +23,10 @@ import java.time.Instant
 @Service
 class StorageStatsService(
     private val redisTemplate: ReactiveRedisTemplate<String, String>,
-    private val partitioningService: QueuePartitioningService
+    private val partitioningService: QueuePartitioningService,
+    private val objectMapper: ObjectMapper,
+    private val warmTierManagerService: WarmTierManagerService,
+    @Lazy private val coldStorageService: com.example.sqs.storage.service.impl.ColdStorageService
 ) {
 
     private val logger = LoggerFactory.getLogger(StorageStatsService::class.java)
@@ -31,10 +39,28 @@ class StorageStatsService(
     }
 
     /**
-     * Warm Storage 통계 정보 조회 (모든 큐 타입에서 파티션 사용)
+     * Warm Storage 통계 정보 조회 (RocksDB 사용)
      */
     fun getWarmStats(queue: Queue): Mono<TierStats> {
-        return getPartitionedTierStats(queue, "WARM")
+        return warmTierManagerService.getWarmStats()
+            .map { warmStats ->
+                TierStats(
+                    tier = "WARM",
+                    messageCount = warmStats.totalMessages.toLong(),
+                    oldestMessageTime = null, // WarmStorageStats에는 이 정보가 없음
+                    newestMessageTime = null, // WarmStorageStats에는 이 정보가 없음
+                    totalSizeBytes = warmStats.estimatedSizeBytes
+                )
+            }
+            .onErrorReturn(
+                TierStats(
+                    tier = "WARM",
+                    messageCount = 0,
+                    oldestMessageTime = null,
+                    newestMessageTime = null,
+                    totalSizeBytes = 0
+                )
+            )
     }
 
     /**
@@ -55,6 +81,44 @@ class StorageStatsService(
      * 파티션된 큐에서 메시지 이관 (FIFO와 Standard 모두 지원)
      */
     private fun moveMessageInPartitionedQueue(messageId: String, fromTier: String, toTier: String, queue: Queue): Mono<Void> {
+        return if (queue.attributes.fifoQueue) {
+            // FIFO 큐인 경우: MessageGroupId 기반으로 정확한 파티션 계산
+            moveMessageInFifoQueue(messageId, fromTier, toTier, queue)
+        } else {
+            // Standard 큐인 경우: 모든 파티션 검색
+            moveMessageInStandardQueue(messageId, fromTier, toTier, queue)
+        }
+    }
+
+    /**
+     * FIFO 큐에서 메시지 이관 - MessageGroupId 기반 파티션 유지
+     */
+    private fun moveMessageInFifoQueue(messageId: String, fromTier: String, toTier: String, queue: Queue): Mono<Void> {
+        // 메시지에서 MessageGroupId 추출
+        return getMessageDetails(messageId)
+            .flatMap { message ->
+                val messageGroupId = message.messageGroupId
+                if (messageGroupId.isNullOrBlank()) {
+                    Mono.error(IllegalStateException("FIFO 메시지에서 MessageGroupId를 찾을 수 없습니다: $messageId"))
+                } else {
+                    // MessageGroupId 기반으로 파티션 계산
+                    val partitionNumber = partitioningService.getPartitionNumber(messageGroupId, 4)
+                    val partitionedQueueName = partitioningService.getPartitionedQueueName(queue.queueName, partitionNumber)
+                    
+                    val tierPrefix = fromTier.lowercase()
+                    val fromKey = "${tierPrefix}:queue:${queue.tenantId}:${partitionedQueueName}"
+                    val toTierPrefix = toTier.lowercase()
+                    val toKey = "${toTierPrefix}:queue:${queue.tenantId}:${partitionedQueueName}"
+                    
+                    moveMessageBetweenKeys(messageId, fromKey, toKey, toTier)
+                }
+            }
+    }
+
+    /**
+     * Standard 큐에서 메시지 이관 - 모든 파티션 검색
+     */
+    private fun moveMessageInStandardQueue(messageId: String, fromTier: String, toTier: String, queue: Queue): Mono<Void> {
         val partitionCount = 4 // 설정에서 가져와야 함
         val tierPrefix = fromTier.lowercase()
 
@@ -86,18 +150,61 @@ class StorageStatsService(
      * 키 간 메시지 이관
      */
     private fun moveMessageBetweenKeys(messageId: String, fromKey: String, toKey: String, toTier: String): Mono<Void> {
-        return redisTemplate.opsForList()
-            .remove(fromKey, 1, messageId)
-            .flatMap {
-                when (toTier) {
-                    "HOT" -> redisTemplate.opsForList().leftPush(toKey, messageId)
-                    else -> redisTemplate.opsForList().rightPush(toKey, messageId)
+        return when (toTier) {
+            "COLD" -> {
+                // COLD 티어로 이동하는 경우: 실제 메시지 객체를 가져와서 파일 시스템에 저장
+                val messageSource = if (fromKey.contains("warm:")) {
+                    // WARM에서 COLD로 이동: RocksDB에서 메시지 조회
+                    warmTierManagerService.getMessageFromWarm(messageId)
+                        .cast(Message::class.java)
+                } else {
+                    // HOT에서 COLD로 이동: Redis에서 메시지 조회
+                    getMessageDetails(messageId)
                 }
+                
+                messageSource
+                    .flatMap { message ->
+                        // ColdStorageService를 사용하여 파일 시스템에 저장
+                        Mono.fromCallable {
+                            kotlinx.coroutines.runBlocking {
+                                coldStorageService.saveMessage(message)
+                            }
+                        }
+                        .flatMap { success ->
+                            if (success) {
+                                // COLD 저장 성공 시, 기존 위치에서 메시지 제거
+                                if (fromKey.contains("warm:")) {
+                                    // WARM에서 제거: RocksDB에서 삭제
+                                    warmTierManagerService.deleteMessageFromWarm(messageId)
+                                        .then(updateMessageTier(messageId, toTier))
+                                } else {
+                                    // HOT에서 제거: Redis에서 삭제
+                                    redisTemplate.opsForList()
+                                        .remove(fromKey, 1, messageId)
+                                        .then(updateMessageTier(messageId, toTier))
+                                }
+                            } else {
+                                Mono.error(RuntimeException("Failed to save message to COLD storage: $messageId"))
+                            }
+                        }
+                    }
             }
-            .then(updateMessageTier(messageId, toTier))
-            .doOnSuccess {
-                logger.debug("메시지 이관 완료: messageId=$messageId, $fromKey → $toKey")
+            else -> {
+                // HOT/WARM 티어 간 이동: 기존 Redis 기반 로직 사용
+                redisTemplate.opsForList()
+                    .remove(fromKey, 1, messageId)
+                    .flatMap {
+                        when (toTier) {
+                            "HOT" -> redisTemplate.opsForList().leftPush(toKey, messageId)
+                            else -> redisTemplate.opsForList().rightPush(toKey, messageId)
+                        }
+                    }
+                    .then(updateMessageTier(messageId, toTier))
             }
+        }
+        .doOnSuccess {
+            logger.debug("메시지 이관 완료: messageId=$messageId, $fromKey → $toKey ($toTier)")
+        }
     }
 
     /**
@@ -178,15 +285,32 @@ class StorageStatsService(
      */
     fun getMessageLocation(messageId: String): Mono<MessageLocation> {
         return redisTemplate.opsForHash<String, String>()
-            .entries("message:$messageId")
+            .entries("message:location:$messageId")
             .collectMap({ it.key }, { it.value })
-            .map { messageData ->
-                MessageLocation(
-                    tier = StorageTier.valueOf(messageData["tier"] ?: "HOT"),
-                    lastMovedAt = messageData["movedAt"]?.let { Instant.parse(it) } ?: Instant.now(),
-                    createdAt = messageData["createdAt"]?.let { Instant.parse(it) } ?: Instant.now()
-                )
+            .map { locationData ->
+                if (locationData.isEmpty()) {
+                    // 위치 정보가 없으면 기본값 (HOT)
+                    MessageLocation(
+                        tier = StorageTier.HOT,
+                        lastMovedAt = Instant.now(),
+                        createdAt = Instant.now()
+                    )
+                } else {
+                    MessageLocation(
+                        tier = StorageTier.valueOf(locationData["tier"] ?: "HOT"),
+                        lastMovedAt = locationData["lastMovedAt"]?.let { Instant.parse(it) } ?: Instant.now(),
+                        createdAt = locationData["createdAt"]?.let { Instant.parse(it) } ?: Instant.now()
+                    )
+                }
             }
+            .onErrorReturn(
+                // Redis 에러 시 기본값 반환
+                MessageLocation(
+                    tier = StorageTier.HOT,
+                    lastMovedAt = Instant.now(),
+                    createdAt = Instant.now()
+                )
+            )
     }
 
     /**
@@ -228,13 +352,7 @@ class StorageStatsService(
      * 메시지의 현재 계층 정보 업데이트
      */
     private fun updateMessageTier(messageId: String, tier: String): Mono<Void> {
-        return redisTemplate.opsForHash<String, String>()
-            .putAll(
-                "message:$messageId", mapOf(
-                    "tier" to tier,
-                    "movedAt" to Instant.now().toString()
-                )
-            )
+        return updateMessageLocation(messageId, StorageTier.valueOf(tier))
             .then()
     }
 
@@ -242,13 +360,20 @@ class StorageStatsService(
      * 특정 스토리지 계층의 메시지 목록 조회 (모든 큐 타입에서 파티션 사용)
      */
     fun getMessagesByTier(queue: Queue, tier: String, maxMessages: Int, offset: Int): Mono<List<TierMessageInfo>> {
-        val partitionCount = 4 // 설정에서 가져와야 함
-        val tierPrefix = when (tier.uppercase()) {
-            "HOT" -> "hot:queue"
-            "WARM" -> "warm:queue"
-            "COLD" -> "cold:queue"
-            else -> return Mono.just(emptyList())
+        return when (tier.uppercase()) {
+            "HOT" -> getHotTierMessages(queue, maxMessages, offset)
+            "WARM" -> getWarmTierMessages(queue, maxMessages, offset)
+            "COLD" -> getColdTierMessages(queue, maxMessages, offset)
+            else -> Mono.just(emptyList())
         }
+    }
+
+    /**
+     * HOT 계층 메시지 조회 (Redis)
+     */
+    private fun getHotTierMessages(queue: Queue, maxMessages: Int, offset: Int): Mono<List<TierMessageInfo>> {
+        val partitionCount = 4 // 설정에서 가져와야 함
+        val tierPrefix = "hot:queue"
 
         return Flux.range(0, partitionCount)
             .flatMap { partitionNumber ->
@@ -256,14 +381,61 @@ class StorageStatsService(
                 val tierKey = "$tierPrefix:${queue.tenantId}:$partitionedQueueName"
 
                 redisTemplate.opsForList()
-                    .range(tierKey, 0, -1) // 모든 메시지를 가져와서 offset/limit는 나중에 적용
+                    .range(tierKey, 0, -1)
                     .flatMap { messageId ->
-                        getMessageDetails(messageId, tier)
+                        getMessageDetails(messageId, "HOT")
                     }
             }
             .collectList()
             .map { allMessages ->
-                // 메시지를 시간순으로 정렬 후 offset/limit 적용
+                allMessages
+                    .sortedBy { it.sentTimestamp }
+                    .drop(offset)
+                    .take(maxMessages)
+            }
+    }
+
+    /**
+     * WARM 계층 메시지 조회 (RocksDB)
+     */
+    private fun getWarmTierMessages(queue: Queue, maxMessages: Int, offset: Int): Mono<List<TierMessageInfo>> {
+        return warmTierManagerService.getWarmMessagesByQueue(queue.tenantId, queue.queueName, maxMessages, offset)
+            .map { warmMessage ->
+                TierMessageInfo(
+                    messageId = warmMessage.messageId,
+                    messageBody = warmMessage.messageBody,
+                    attributes = warmMessage.attributes,
+                    sentTimestamp = warmMessage.sentTimestamp.toString(),
+                    receivedCount = warmMessage.receiveCount,
+                    tier = "WARM",
+                    movedToTierAt = null, // WARM 메시지에는 이 정보가 없을 수 있음
+                    sizeBytes = warmMessage.messageBody.length.toLong(),
+                    compressionType = null // WARM 메시지의 압축 타입 정보
+                )
+            }
+            .collectList()
+    }
+
+    /**
+     * COLD 계층 메시지 조회 (파일 시스템)
+     */
+    private fun getColdTierMessages(queue: Queue, maxMessages: Int, offset: Int): Mono<List<TierMessageInfo>> {
+        val partitionCount = 4 // 설정에서 가져와야 함
+        val tierPrefix = "cold:queue"
+
+        return Flux.range(0, partitionCount)
+            .flatMap { partitionNumber ->
+                val partitionedQueueName = partitioningService.getPartitionedQueueName(queue.queueName, partitionNumber)
+                val tierKey = "$tierPrefix:${queue.tenantId}:$partitionedQueueName"
+
+                redisTemplate.opsForList()
+                    .range(tierKey, 0, -1)
+                    .flatMap { messageId ->
+                        getMessageDetails(messageId, "COLD")
+                    }
+            }
+            .collectList()
+            .map { allMessages ->
                 allMessages
                     .sortedBy { it.sentTimestamp }
                     .drop(offset)
@@ -357,6 +529,55 @@ class StorageStatsService(
             logger.warn("메시지 파싱 실패: $messageId", e)
             Instant.now()
         }
+    }
+
+    /**
+     * 메시지 위치 정보 저장
+     */
+    fun saveMessageLocation(messageId: String, tier: StorageTier, createdAt: Instant = Instant.now()): Mono<Boolean> {
+        val locationData = mapOf(
+            "tier" to tier.name,
+            "lastMovedAt" to createdAt.toString(),
+            "createdAt" to createdAt.toString()
+        )
+
+        return redisTemplate.opsForHash<String, String>()
+            .putAll("message:location:$messageId", locationData)
+            .onErrorReturn(false)
+    }
+
+    /**
+     * 메시지 위치 정보 업데이트 (계층 이동 시)
+     */
+    fun updateMessageLocation(messageId: String, newTier: StorageTier): Mono<Boolean> {
+        val updateData = mapOf(
+            "tier" to newTier.name,
+            "lastMovedAt" to Instant.now().toString()
+        )
+
+        return redisTemplate.opsForHash<String, String>()
+            .putAll("message:location:$messageId", updateData)
+            .onErrorReturn(false)
+    }
+
+    /**
+     * 메시지 위치 정보 제거
+     */
+    fun removeMessageLocation(messageId: String): Mono<Boolean> {
+        return redisTemplate.delete("message:location:$messageId")
+            .map { it > 0 }
+            .onErrorReturn(false)
+    }
+
+    /**
+     * 메시지 전체 정보를 Message 객체로 조회
+     */
+    private fun getMessageDetails(messageId: String): Mono<Message> {
+        return redisTemplate.opsForValue()
+            .get("message:$messageId")
+            .map { messageJson ->
+                objectMapper.readValue(messageJson, Message::class.java)
+            }
     }
 
 }

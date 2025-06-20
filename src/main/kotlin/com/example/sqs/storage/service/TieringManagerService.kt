@@ -1,6 +1,7 @@
 package com.example.sqs.storage.service
 
 import com.example.sqs.storage.domain.*
+import kotlinx.coroutines.reactor.awaitSingle
 import org.springframework.stereotype.Service
 import java.time.Instant
 
@@ -8,7 +9,9 @@ import java.time.Instant
  * 계층화 관리 서비스
  */
 @Service
-class TieringManagerService() {
+class TieringManagerService(
+    private val storageStatsService: StorageStatsService
+) {
 
     /**
      * 모든 계층의 메트릭 조회
@@ -62,12 +65,7 @@ class TieringManagerService() {
      * 메시지 위치 정보 조회
      */
     suspend fun getMessageLocation(messageId: String): MessageLocation {
-        // 임시 구현 - 실제로는 Redis나 데이터베이스에서 조회해야 함
-        return MessageLocation(
-            tier = StorageTier.HOT,
-            lastMovedAt = Instant.now(),
-            createdAt = Instant.now().minusSeconds(3600)
-        )
+        return storageStatsService.getMessageLocation(messageId).awaitSingle()
     }
 
     /**

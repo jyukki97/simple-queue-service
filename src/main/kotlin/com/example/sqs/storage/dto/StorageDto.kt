@@ -1,8 +1,8 @@
 package com.example.sqs.storage.dto
 
+import com.example.sqs.storage.domain.PromotionHintType
 import com.example.sqs.storage.domain.StorageTier
 import com.example.sqs.storage.domain.TierStats
-import com.example.sqs.storage.domain.PromotionHintType
 
 /**
  * 메시지 위치 응답 DTO
@@ -146,4 +146,23 @@ data class TierMessageInfo(
     val movedToTierAt: String?,
     val sizeBytes: Long,
     val compressionType: String?
+)
+
+/**
+ * 배치 이동 요청
+ */
+data class BatchMoveRequest(
+    val messageIds: List<String>,
+    val tenantId: String,
+    val queueName: String
+)
+
+/**
+ * 배치 이동 결과
+ */
+data class BatchMoveResult(
+    val totalRequested: Int,
+    val successCount: Int,
+    val failCount: Int,
+    val errors: List<String>
 )

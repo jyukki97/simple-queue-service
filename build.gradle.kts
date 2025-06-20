@@ -35,6 +35,9 @@ dependencies {
     // Redis (Reactive)
     implementation("io.lettuce:lettuce-core")
     
+    // RocksDB for WARM storage layer
+    implementation("org.rocksdb:rocksdbjni:8.11.3")
+    
     // Monitoring
     implementation("io.micrometer:micrometer-registry-prometheus")
     

@@ -17,10 +17,10 @@ for i in $(seq 1 $TOTAL_MESSAGES); do
 {
   "messageBody": "$MESSAGE_BODY",
   "delaySeconds": 0,
+  "messageGroupId": "group-$(( (i - 1) % 10 + 1 ))",
+  "messageDeduplicationId": "dedup-$i-$(date +%s%N)",
   "attributes": {
     "messageNumber": "$i",
-    "messageGroupId": "group-$(( (i - 1) % 10 + 1 ))",
-    "messageDeduplicationId": "dedup-$i-$(date +%s%N)",
     "sender": "bulk-test"
   }
 }

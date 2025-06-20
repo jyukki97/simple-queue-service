@@ -47,15 +47,6 @@ data class TierMetrics(
 )
 
 /**
- * 배치 결과
- */
-data class BatchResult(
-    val successCount: Int,
-    val failureCount: Int,
-    val errors: List<String>
-)
-
-/**
  * 승격 힌트 (사용자 제공)
  */
 data class PromotionHint(

@@ -2,6 +2,8 @@ package com.example.sqs.storage.util
 
 import com.example.sqs.message.domain.Message
 import com.example.sqs.queue.domain.Queue
+import com.example.sqs.storage.domain.StorageTier
+import com.example.sqs.storage.service.StorageStatsService
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.springframework.data.redis.core.ReactiveRedisTemplate
 import org.springframework.stereotype.Component
@@ -14,7 +16,8 @@ import java.time.Instant
 @Component
 class MessageStorageUtils(
     private val redisTemplate: ReactiveRedisTemplate<String, String>,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    private val storageStatsService: StorageStatsService
 ) {
     
     /**
@@ -26,6 +29,14 @@ class MessageStorageUtils(
         
         return redisTemplate.opsForValue()
             .set(messageKey, messageJson)
+            .then(
+                // 메시지 위치 정보도 함께 저장 (기본적으로 HOT 계층)
+                storageStatsService.saveMessageLocation(
+                    messageId = message.messageId,
+                    tier = StorageTier.HOT,
+                    createdAt = message.sentTimestamp
+                )
+            )
             .then()
     }
     
@@ -50,10 +61,12 @@ class MessageStorageUtils(
     }
     
     /**
-     * 메시지 파티션 번호 결정 (FIFO 큐용)
+     * 메시지 파티션 번호 결정 (FIFO 큐용 - MessageGroupId 필수)
      */
     fun determinePartitionForFifo(message: Message, partitionCount: Int): Int {
-        val messageGroupId = message.attributes["MessageGroupId"] ?: message.messageId
+        val messageGroupId = message.messageGroupId 
+            ?: message.attributes["MessageGroupId"]
+            ?: throw IllegalStateException("FIFO 큐에서 MessageGroupId가 누락되었습니다")
         return Math.abs(messageGroupId.hashCode()) % partitionCount
     }
     

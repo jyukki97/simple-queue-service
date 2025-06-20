@@ -8,15 +8,21 @@ export interface QueueAttributes {
   delaySeconds: number;
   maxReceiveCount: number;
   deadLetterTargetArn?: string;
+  redrivePolicy?: string;
   fifoQueue: boolean;
+  contentBasedDeduplication?: boolean;
+  receiveMessageWaitTimeSeconds?: number;
 }
 
 export interface Queue {
   queueName: string;
   tenantId: string;
   attributes: QueueAttributes;
-  createdAt: string;
-  updatedAt: string;
+  createdAt: number;
+  updatedAt: number;
+  messagesKey?: string;
+  delayedKey?: string;
+  inFlightKey?: string;
 }
 
 export interface QueueStatistics {
@@ -37,6 +43,8 @@ export interface SendMessageRequest {
   messageBody: string;
   delaySeconds?: number;
   attributes?: Record<string, string>;
+  messageGroupId?: string;  // FIFO 큐용
+  messageDeduplicationId?: string;  // FIFO 큐용
 }
 
 export interface SendMessageBatchRequest {
@@ -45,6 +53,8 @@ export interface SendMessageBatchRequest {
     messageBody: string;
     delaySeconds?: number;
     attributes?: Record<string, string>;
+    messageGroupId?: string;  // FIFO 큐용
+    messageDeduplicationId?: string;  // FIFO 큐용
   }>;
 }
 
@@ -66,10 +76,12 @@ export interface MessagePreview {
   messageId: string;
   messageBody: string;
   attributes: Record<string, string>;
-  sentTimestamp: string;
-  firstReceiveTimestamp?: string;
+  sentTimestamp: number;
+  firstReceiveTimestamp?: number;
   receiveCount: number;
-  approximateFirstReceiveTimestamp?: string;
+  approximateFirstReceiveTimestamp?: number;
+  messageGroupId?: string;  // FIFO 큐용
+  messageDeduplicationId?: string;  // FIFO 큐용
 }
 
 export interface PeekMessageResponse {
@@ -80,6 +92,7 @@ export interface ReceiveMessageRequest {
   maxNumberOfMessages?: number;
   visibilityTimeoutSeconds?: number;
   waitTimeSeconds?: number;
+  messageGroupId?: string;  // FIFO 큐용
 }
 
 export interface MessageResponse {
@@ -87,7 +100,9 @@ export interface MessageResponse {
   messageBody: string;
   attributes: Record<string, string>;
   receiptHandle: string;
-  sentTimestamp: string;
+  sentTimestamp: number;
+  messageGroupId?: string;  // FIFO 큐용
+  messageDeduplicationId?: string;  // FIFO 큐용
 }
 
 export interface ReceiveMessageResponse {
@@ -96,8 +111,7 @@ export interface ReceiveMessageResponse {
 
 export interface SendMessageResponse {
   messageId: string;
-  md5OfBody: string;
-  md5OfMessageAttributes?: string;
+  messageBodyMD5?: string;
 }
 
 export interface ApiResponse<T> {
@@ -111,7 +125,7 @@ export interface ApiResponse<T> {
 }
 
 class QueueService {
-  private apiKey = 'test-api-key'; // TODO: 실제 환경에서는 안전한 방식으로 관리
+  private apiKey = 'test-api-key'; // Admin API key for testing
 
   private getHeaders() {
     return {
@@ -257,6 +271,9 @@ class QueueService {
     }
     if (request?.waitTimeSeconds) {
       params.append('waitTimeSeconds', request.waitTimeSeconds.toString());
+    }
+    if (request?.messageGroupId) {
+      params.append('messageGroupId', request.messageGroupId);
     }
 
     const response: AxiosResponse<ApiResponse<ReceiveMessageResponse>> = await axios.get(

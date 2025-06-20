@@ -25,16 +25,28 @@ class UnifiedMessageService(
     /**
      * 통합된 메시지 수신 (파티션 기반, Hot → Warm → Cold 순서)
      */
-    fun receiveMessages(queue: Queue, maxMessages: Int, visibilityTimeoutSeconds: Int?): Flux<Message> {
+    fun receiveMessages(queue: Queue, maxMessages: Int, visibilityTimeoutSeconds: Int?, messageGroupId: String? = null): Flux<Message> {
         logger.debug("메시지 수신 시작: queue=${queue.queueName}, maxMessages=$maxMessages, fifo=${queue.attributes.fifoQueue}")
 
-        return receiveFromAllPartitions(queue, maxMessages, "hot")
-            .switchIfEmpty(
-                receiveFromAllPartitions(queue, maxMessages, "warm")
-                    .switchIfEmpty(
-                        receiveFromAllPartitions(queue, maxMessages, "cold")
-                    )
-            )
+        return if (queue.attributes.fifoQueue == true && messageGroupId != null) {
+            // FIFO 큐에서 특정 MessageGroupId의 메시지만 수신
+            receiveFromSpecificGroup(queue, maxMessages, messageGroupId, "hot")
+                .switchIfEmpty(
+                    receiveFromSpecificGroup(queue, maxMessages, messageGroupId, "warm")
+                        .switchIfEmpty(
+                            receiveFromSpecificGroup(queue, maxMessages, messageGroupId, "cold")
+                        )
+                )
+        } else {
+            // 모든 파티션에서 수신 (기존 로직)
+            receiveFromAllPartitions(queue, maxMessages, "hot")
+                .switchIfEmpty(
+                    receiveFromAllPartitions(queue, maxMessages, "warm")
+                        .switchIfEmpty(
+                            receiveFromAllPartitions(queue, maxMessages, "cold")
+                        )
+                )
+        }
             .take(maxMessages.toLong())
             .flatMap { message ->
                 processReceivedMessage(queue, message, visibilityTimeoutSeconds)
@@ -124,6 +136,25 @@ class UnifiedMessageService(
     }
 
     /**
+     * 특정 MessageGroupId의 파티션에서 메시지 수신
+     */
+    private fun receiveFromSpecificGroup(queue: Queue, maxMessages: Int, messageGroupId: String, tier: String): Flux<Message> {
+        // MessageGroupId에 해당하는 파티션 계산
+        val partition = Math.abs(messageGroupId.hashCode()) % partitionCount
+        
+        return when (tier) {
+            "hot" -> receiveFromHotPartition(queue, partition, maxMessages)
+            "warm" -> receiveFromWarmPartition(queue, partition, maxMessages)
+            "cold" -> receiveFromColdPartition(queue, partition, maxMessages)
+            else -> Flux.empty()
+        }.filter { message ->
+            // 메시지의 MessageGroupId가 요청한 것과 일치하는지 확인
+            val msgGroupId = message.messageGroupId ?: message.attributes["MessageGroupId"]
+            msgGroupId == messageGroupId
+        }
+    }
+
+    /**
      * 메시지를 Hot Storage로 승격
      */
     private fun promoteToHot(queue: Queue, messageId: String, partition: Int): Mono<Void> {
@@ -192,12 +223,16 @@ class UnifiedMessageService(
      */
     private fun determinePartition(queue: Queue, message: Message): Int {
         return if (queue.attributes.fifoQueue == true) {
-            // FIFO: MessageGroupId 기반 (순서 보장)
-            val messageGroupId = message.attributes["MessageGroupId"] ?: message.messageId
+            // FIFO: MessageGroupId 필수 (Message 객체에서 직접 가져오거나 attributes에서)
+            val messageGroupId = message.messageGroupId 
+                ?: message.attributes["MessageGroupId"]
+                ?: throw IllegalStateException("FIFO 큐에서 MessageGroupId가 누락되었습니다")
             Math.abs(messageGroupId.hashCode()) % partitionCount
         } else {
             // Standard: MessageGroupId가 있으면 사용, 없으면 messageId 사용
-            val groupId = message.attributes["MessageGroupId"] ?: message.messageId
+            val groupId = message.messageGroupId 
+                ?: message.attributes["MessageGroupId"] 
+                ?: message.messageId
             Math.abs(groupId.hashCode()) % partitionCount
         }
     }
