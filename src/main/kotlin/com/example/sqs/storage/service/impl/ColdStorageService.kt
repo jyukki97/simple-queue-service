@@ -1,15 +1,22 @@
 package com.example.sqs.storage.service.impl
 
 import com.example.sqs.message.domain.Message
-import com.example.sqs.storage.domain.*
-import com.example.sqs.storage.service.*
+import com.example.sqs.storage.domain.BatchResult
+import com.example.sqs.storage.domain.MessageLocation
+import com.example.sqs.storage.domain.StorageTier
+import com.example.sqs.storage.domain.TierMetrics
+import com.example.sqs.storage.service.StorageTierService
+import com.example.sqs.storage.service.StorageUsageInfo
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
-import java.io.*
-import java.nio.file.*
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
@@ -28,73 +35,73 @@ class ColdStorageService(
     @Value("\${app.storage.cold.base-path:/tmp/sqs-cold-storage}")
     private val basePath: String
 ) : StorageTierService {
-    
+
     override val tier = StorageTier.COLD
-    
+
     private val metricsCache = ConcurrentHashMap<String, Any>()
-    
+
     companion object {
         private const val MESSAGE_FILE_EXTENSION = ".json.gz"
         private const val INDEX_FILE_NAME = "index.json.gz"
         private const val METADATA_FILE_NAME = "metadata.json"
         private val DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy/MM/dd")
     }
-    
+
     init {
         // 기본 디렉토리 생성
         createDirectoryIfNotExists(Paths.get(basePath))
     }
-    
+
     override suspend fun saveMessage(message: Message): Boolean = withContext(Dispatchers.IO) {
         try {
             val messagePath = getMessagePath(message)
             createDirectoryIfNotExists(messagePath.parent)
-            
+
             // 메시지를 압축하여 저장
             val messageJson = objectMapper.writeValueAsString(message)
             writeCompressedFile(messagePath, messageJson)
-            
+
             // 인덱스 업데이트
             updateIndex(message)
-            
+
             // 메트릭 업데이트
             updateMetrics(1, 0)
-            
+
             true
         } catch (e: Exception) {
             updateMetrics(0, 1)
             false
         }
     }
-    
+
     override suspend fun saveBatch(messages: List<Message>): BatchResult = withContext(Dispatchers.IO) {
         var successful = 0
         var failed = 0
         val errors = mutableListOf<String>()
-        
+
         try {
             // 날짜별로 그룹화
-            val messagesByDate = messages.groupBy { 
+            val messagesByDate = messages.groupBy {
                 LocalDate.ofInstant(it.sentTimestamp, java.time.ZoneId.systemDefault())
             }
-            
+
             messagesByDate.forEach { (date, dayMessages) ->
                 try {
                     val archivePath = getArchivePath(date)
                     createDirectoryIfNotExists(archivePath.parent)
-                    
+
                     // 큐별로 다시 그룹화
                     val messagesByQueue = dayMessages.groupBy { "${it.tenantId}:${it.queueName}" }
-                    
+
                     messagesByQueue.forEach { (queueKey, queueMessages) ->
                         try {
                             val archiveFile = archivePath.resolve("$queueKey$MESSAGE_FILE_EXTENSION")
                             val messagesJson = objectMapper.writeValueAsString(queueMessages)
                             writeCompressedFile(archiveFile, messagesJson)
-                            
+
                             // 배치 인덱스 업데이트
                             updateBatchIndex(queueMessages)
-                            
+
                             successful += queueMessages.size
                         } catch (e: Exception) {
                             failed += queueMessages.size
@@ -106,16 +113,16 @@ class ColdStorageService(
                     errors.add("Failed to process date $date: ${e.message}")
                 }
             }
-            
+
             updateMetrics(successful, failed)
         } catch (e: Exception) {
             failed = messages.size
             errors.add("Batch save failed: ${e.message}")
         }
-        
+
         BatchResult(successful, failed, errors)
     }
-    
+
     override suspend fun getMessage(messageId: String): Message? = withContext(Dispatchers.IO) {
         try {
             // 인덱스에서 메시지 위치 찾기
@@ -129,7 +136,7 @@ class ColdStorageService(
             null
         }
     }
-    
+
     override suspend fun getOldestMessage(queueName: String): Message? = withContext(Dispatchers.IO) {
         try {
             // FIFO: 가장 오래된 메시지 찾기
@@ -139,7 +146,7 @@ class ColdStorageService(
             null
         }
     }
-    
+
     override suspend fun getMessages(queueName: String, maxCount: Int): List<Message> = withContext(Dispatchers.IO) {
         try {
             getQueueMessages(queueName, maxCount)
@@ -147,7 +154,7 @@ class ColdStorageService(
             emptyList()
         }
     }
-    
+
     override suspend fun deleteMessage(messageId: String): Boolean = withContext(Dispatchers.IO) {
         try {
             val location = findMessageLocation(messageId)
@@ -163,12 +170,12 @@ class ColdStorageService(
             false
         }
     }
-    
+
     override suspend fun deleteBatch(messageIds: List<String>): BatchResult = withContext(Dispatchers.IO) {
         var successful = 0
         var failed = 0
         val errors = mutableListOf<String>()
-        
+
         messageIds.forEach { messageId ->
             try {
                 if (deleteMessage(messageId)) {
@@ -182,15 +189,15 @@ class ColdStorageService(
                 errors.add("Error deleting message $messageId: ${e.message}")
             }
         }
-        
+
         BatchResult(successful, failed, errors)
     }
-    
+
     override suspend fun getExpiredMessages(maxAge: Duration, limit: Int): List<Message> = withContext(Dispatchers.IO) {
         try {
             val cutoffTime = Instant.now().minus(maxAge)
             val expiredMessages = mutableListOf<Message>()
-            
+
             // 날짜별 디렉토리를 순회하며 만료된 메시지 검색
             Files.walk(Paths.get(basePath))
                 .filter { Files.isRegularFile(it) && it.toString().endsWith(MESSAGE_FILE_EXTENSION) }
@@ -204,18 +211,18 @@ class ColdStorageService(
                         // 개별 파일 오류는 무시
                     }
                 }
-            
+
             expiredMessages.take(limit)
         } catch (e: Exception) {
             emptyList()
         }
     }
-    
+
     override suspend fun getMetrics(): TierMetrics = withContext(Dispatchers.IO) {
         try {
             val messageCount = getMessageCount()
             val storageUsage = calculateStorageUsage()
-            
+
             TierMetrics(
                 tier = StorageTier.COLD,
                 messageCount = messageCount,
@@ -230,7 +237,7 @@ class ColdStorageService(
             createDefaultMetrics()
         }
     }
-    
+
     override suspend fun getUsageInfo(): StorageUsageInfo = withContext(Dispatchers.IO) {
         try {
             val basePath = Paths.get(this@ColdStorageService.basePath)
@@ -238,7 +245,7 @@ class ColdStorageService(
             val usableSpace = Files.getFileStore(basePath).usableSpace
             val usedSpace = totalSpace - usableSpace
             val storageUsage = calculateStorageUsage()
-            
+
             StorageUsageInfo(
                 tier = StorageTier.COLD,
                 totalCapacityBytes = totalSpace,
@@ -258,7 +265,7 @@ class ColdStorageService(
             )
         }
     }
-    
+
     /**
      * 아카이브 생성
      */
@@ -266,54 +273,54 @@ class ColdStorageService(
         val date = LocalDate.now()
         val archivePath = getArchivePath(date)
         createDirectoryIfNotExists(archivePath.parent)
-        
+
         val archiveFile = archivePath.resolve("$queueName-${System.currentTimeMillis()}$MESSAGE_FILE_EXTENSION")
         val messagesJson = objectMapper.writeValueAsString(messages)
         writeCompressedFile(archiveFile, messagesJson)
-        
+
         archiveFile
     }
-    
+
     /**
      * 승격 후보 조회
      */
     suspend fun getCandidatesForPromotion(queueName: String, timeWindow: Duration): List<Message> = withContext(Dispatchers.IO) {
         val startTime = Instant.now()
         val endTime = startTime.plus(timeWindow)
-        
+
         getQueueMessages(queueName, Int.MAX_VALUE)
             .filter { it.sentTimestamp.isAfter(startTime) && it.sentTimestamp.isBefore(endTime) }
     }
-    
+
     private fun getMessagePath(message: Message): Path {
         val date = LocalDate.ofInstant(message.sentTimestamp, java.time.ZoneId.systemDefault())
         val dateStr = date.format(DATE_FORMATTER)
         return Paths.get(basePath, dateStr, message.tenantId, message.queueName, "${message.messageId}$MESSAGE_FILE_EXTENSION")
     }
-    
+
     private fun getArchivePath(date: LocalDate): Path {
         val dateStr = date.format(DATE_FORMATTER)
         return Paths.get(basePath, "archives", dateStr)
     }
-    
+
     private fun createDirectoryIfNotExists(path: Path) {
         if (!Files.exists(path)) {
             Files.createDirectories(path)
         }
     }
-    
+
     private fun writeCompressedFile(path: Path, content: String) {
         GZIPOutputStream(FileOutputStream(path.toFile())).use { gzip ->
             gzip.write(content.toByteArray())
         }
     }
-    
+
     private fun readCompressedFile(path: Path): String {
         return GZIPInputStream(FileInputStream(path.toFile())).use { gzip ->
             gzip.bufferedReader().readText()
         }
     }
-    
+
     private fun readMessageFromFile(location: MessageLocation): Message? {
         return try {
             // 실제 구현에서는 location 정보를 바탕으로 파일에서 메시지 읽기
@@ -323,7 +330,7 @@ class ColdStorageService(
             null
         }
     }
-    
+
     private fun readMessagesFromFile(path: Path): List<Message> {
         return try {
             val content = readCompressedFile(path)
@@ -332,10 +339,10 @@ class ColdStorageService(
             emptyList()
         }
     }
-    
+
     private fun getQueueMessages(queueName: String, maxCount: Int): List<Message> {
         val messages = mutableListOf<Message>()
-        
+
         try {
             Files.walk(Paths.get(basePath))
                 .filter { Files.isRegularFile(it) && it.toString().endsWith(MESSAGE_FILE_EXTENSION) }
@@ -355,27 +362,27 @@ class ColdStorageService(
         } catch (e: Exception) {
             // 전체 오류 처리
         }
-        
+
         return messages.sortedBy { it.sentTimestamp }
     }
-    
+
     private fun findMessageLocation(messageId: String): MessageLocation? {
         // 실제 구현에서는 인덱스 파일을 사용하여 빠른 검색
         return null
     }
-    
+
     private fun updateIndex(message: Message) {
         // 인덱스 파일 업데이트 로직
     }
-    
+
     private fun updateBatchIndex(messages: List<Message>) {
         // 배치 인덱스 업데이트 로직
     }
-    
+
     private fun markMessageAsDeleted(messageId: String, location: MessageLocation) {
         // 메시지 삭제 마킹 로직
     }
-    
+
     private fun getMessageCount(): Long {
         return try {
             Files.walk(Paths.get(basePath))
@@ -392,7 +399,7 @@ class ColdStorageService(
             0L
         }
     }
-    
+
     private fun calculateStorageUsage(): Long {
         return try {
             Files.walk(Paths.get(basePath))
@@ -403,11 +410,11 @@ class ColdStorageService(
             0L
         }
     }
-    
+
     private fun updateMetrics(messageCountDelta: Int, errorCountDelta: Int) {
         metricsCache["errorRate"] = (metricsCache["errorRate"] as? Double ?: 0.0) + errorCountDelta
     }
-    
+
     private fun createDefaultMetrics(): TierMetrics {
         return TierMetrics(
             tier = StorageTier.COLD,

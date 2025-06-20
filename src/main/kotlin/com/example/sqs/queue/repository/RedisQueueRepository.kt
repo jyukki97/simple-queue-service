@@ -226,4 +226,9 @@ class RedisQueueRepository(
             redisTemplate.delete(inFlightKey)
         )
     }
+    
+    override fun findAllFifoQueues(): Flux<Queue> {
+        return findAllQueues()
+            .filter { queue -> queue.attributes.fifoQueue == true }
+    }
 }

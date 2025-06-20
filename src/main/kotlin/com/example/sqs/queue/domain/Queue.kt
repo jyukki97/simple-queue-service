@@ -9,9 +9,7 @@ data class Queue(
     val createdAt: Instant,
     val updatedAt: Instant
 ) {
-    fun getQueueKey(): String = "queue:${tenantId}:${queueName}"
     fun getMessagesKey(): String = "queue:messages:${tenantId}:${queueName}"
-    fun getAvailableKey(): String = "queue:messages:${tenantId}:${queueName}" // available messages queue
     fun getDelayedKey(): String = "queue:delayed:${tenantId}:${queueName}"
     fun getInFlightKey(): String = "queue:inflight:${tenantId}:${queueName}"
 }
@@ -23,13 +21,16 @@ data class QueueAttributes(
     val maxReceiveCount: Int = 3,
     val deadLetterTargetArn: String? = null,
     val redrivePolicy: RedrivePolicy? = null,
-    val fifoQueue: Boolean = false // FIFO 큐 여부
+    val fifoQueue: Boolean = false, // FIFO 큐 여부
+    val contentBasedDeduplication: Boolean = false, // 콘텐츠 기반 중복 제거
+    val receiveMessageWaitTimeSeconds: Int = 0 // 롱 폴링 대기 시간
 ) {
     init {
         require(visibilityTimeoutSeconds in 0..43200) { "가시성 타임아웃은 0~43200초 사이여야 합니다" }
         require(messageRetentionPeriod in 60..1209600) { "메시지 보존 기간은 60~1209600초 사이여야 합니다" }
         require(delaySeconds in 0..900) { "지연 시간은 0~900초 사이여야 합니다" }
         require(maxReceiveCount in 1..1000) { "최대 수신 횟수는 1~1000 사이여야 합니다" }
+        require(receiveMessageWaitTimeSeconds in 0..20) { "롱 폴링 대기 시간은 0~20초 사이여야 합니다" }
     }
 }
 
@@ -45,7 +46,10 @@ data class CreateQueueRequest(
 ) {
     init {
         require(queueName.isNotBlank()) { "큐 이름은 비어있을 수 없습니다" }
-        require(queueName.matches(Regex("^[a-zA-Z0-9_-]+$"))) { "큐 이름은 영숫자, 하이픈, 언더스코어만 사용할 수 있습니다" }
+        require(queueName.matches(Regex("^[a-zA-Z0-9._-]+$"))) { "큐 이름은 영숫자, 점, 하이픈, 언더스코어만 사용할 수 있습니다" }
+        if (attributes.fifoQueue) {
+            require(queueName.endsWith(".fifo")) { "FIFO 큐 이름은 .fifo로 끝나야 합니다" }
+        }
     }
 }
 

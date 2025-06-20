@@ -93,7 +93,6 @@
 }
 
 .modal-content {
-  overflow-y: auto;
   max-height: calc(85vh - 80px);
 }
 
@@ -373,6 +372,17 @@
 .action-btn.primary:hover {
   background-color: #2563eb;
   border-color: #2563eb;
+}
+
+.action-btn.storage {
+  background-color: #8b5cf6;
+  color: white;
+  border-color: #8b5cf6;
+}
+
+.action-btn.storage:hover {
+  background-color: #7c3aed;
+  border-color: #7c3aed;
 }
 
 /* Empty State */

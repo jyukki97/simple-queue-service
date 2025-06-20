@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Queue, QueueStatistics } from '../types/sqs';
 import { sqsApi } from '../services/sqsApi';
+import StorageMessagesView from './StorageMessagesView';
 import './QueueManager.css';
 
 interface QueueManagerProps {
@@ -15,6 +16,8 @@ const QueueManager: React.FC<QueueManagerProps> = ({ onQueueSelect, selectedQueu
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [queueStats, setQueueStats] = useState<{ [queueName: string]: QueueStatistics }>({});
   const [statsLoading, setStatsLoading] = useState<{ [queueName: string]: boolean }>({});
+  const [storageViewVisible, setStorageViewVisible] = useState(false);
+  const [storageViewQueueName, setStorageViewQueueName] = useState<string>('');
 
   const loadQueues = async () => {
     setLoading(true);
@@ -69,16 +72,17 @@ const QueueManager: React.FC<QueueManagerProps> = ({ onQueueSelect, selectedQueu
     try {
       const response = await sqsApi.deleteQueue(queueName);
       if (response.success) {
-        setMessage({ type: 'success', text: `큐 '${queueName}' 삭제 완료` });
+        setMessage({ type: 'success', text: '큐가 삭제되었습니다' });
+        loadQueues();
+        // 선택된 큐가 삭제된 경우 선택 해제
         if (selectedQueue === queueName) {
           onQueueSelect('');
         }
-        loadQueues();
       } else {
         setMessage({ type: 'error', text: response.error?.message || '큐 삭제 실패' });
       }
     } catch (error) {
-      setMessage({ type: 'error', text: '큐 삭제 중 오류가 발생했습니다' });
+      setMessage({ type: 'error', text: '네트워크 오류가 발생했습니다' });
     }
   };
 
@@ -96,6 +100,13 @@ const QueueManager: React.FC<QueueManagerProps> = ({ onQueueSelect, selectedQueu
     } finally {
       setStatsLoading(prev => ({ ...prev, [queueName]: false }));
     }
+  };
+
+  const showStorageMessages = (queueName: string) => {
+    console.log('showStorageMessages called with queueName:', queueName);
+    alert(`스토리지 메시지 보기 클릭됨: ${queueName}`);
+    setStorageViewQueueName(queueName);
+    setStorageViewVisible(true);
   };
 
   useEffect(() => {
@@ -130,7 +141,7 @@ const QueueManager: React.FC<QueueManagerProps> = ({ onQueueSelect, selectedQueu
           />
           <button onClick={createQueue} className="btn btn-primary">
             생성
-          </button>
+          </button>      
         </div>
       </div>
 
@@ -185,8 +196,29 @@ const QueueManager: React.FC<QueueManagerProps> = ({ onQueueSelect, selectedQueu
                     disabled={statsLoading[queue.queueName]}
                     className="btn btn-secondary btn-sm"
                     style={{ marginRight: '0.25rem' }}
+                    title="통계 보기"
                   >
                     {statsLoading[queue.queueName] ? '⏳' : '📊'}
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      showStorageMessages(queue.queueName);
+                    }}
+                    style={{ 
+                      marginRight: '8px',
+                      backgroundColor: '#007bff',
+                      color: 'white',
+                      border: '2px solid #007bff',
+                      borderRadius: '4px',
+                      padding: '8px 12px',
+                      fontSize: '14px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer'
+                    }}
+                    title="스토리지별 메시지 보기 (Hot/Warm/Cold Storage)"
+                  >
+                    � 스토리지 보기
                   </button>
                   <button
                     onClick={(e) => {
@@ -203,6 +235,13 @@ const QueueManager: React.FC<QueueManagerProps> = ({ onQueueSelect, selectedQueu
           </div>
         )}
       </div>
+
+      {/* 스토리지 메시지 보기 모달 */}
+      <StorageMessagesView
+        queueName={storageViewQueueName}
+        visible={storageViewVisible}
+        onClose={() => setStorageViewVisible(false)}
+      />
     </div>
   );
 };

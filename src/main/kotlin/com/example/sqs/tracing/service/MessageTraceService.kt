@@ -1,8 +1,10 @@
 package com.example.sqs.tracing.service
 
-import com.example.sqs.tracing.domain.*
+import com.example.sqs.tracing.domain.MessageTrace
+import com.example.sqs.tracing.domain.MessageTraceEvent
+import com.example.sqs.tracing.domain.MessageTraceEventType
+import com.example.sqs.tracing.domain.TraceStatistics
 import com.example.sqs.tracing.repository.MessageTraceRepository
-import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
@@ -16,8 +18,6 @@ import java.util.*
 class MessageTraceService(
     private val messageTraceRepository: MessageTraceRepository
 ) {
-
-    private val logger = LoggerFactory.getLogger(MessageTraceService::class.java)
 
     /**
      * 메시지 전송 이벤트를 기록합니다
@@ -40,7 +40,7 @@ class MessageTraceService(
             traceId = traceId,
             spanId = UUID.randomUUID().toString()
         )
-        
+
         return messageTraceRepository.recordEvent(event)
     }
 
@@ -66,7 +66,7 @@ class MessageTraceService(
             traceId = traceId,
             spanId = UUID.randomUUID().toString()
         )
-        
+
         return messageTraceRepository.recordEvent(event)
     }
 
@@ -92,7 +92,7 @@ class MessageTraceService(
             traceId = traceId,
             spanId = UUID.randomUUID().toString()
         )
-        
+
         return messageTraceRepository.recordEvent(event)
     }
 
@@ -117,34 +117,7 @@ class MessageTraceService(
             traceId = traceId,
             spanId = UUID.randomUUID().toString()
         )
-        
-        return messageTraceRepository.recordEvent(event)
-    }
 
-    /**
-     * DLQ 이동 이벤트를 기록합니다
-     */
-    fun recordMessageMovedToDLQ(
-        messageId: String,
-        tenantId: String,
-        queueName: String,
-        dlqName: String,
-        reason: String,
-        traceId: String? = null,
-        metadata: Map<String, Any> = emptyMap()
-    ): Mono<Void> {
-        val event = MessageTraceEvent(
-            eventId = UUID.randomUUID().toString(),
-            messageId = messageId,
-            tenantId = tenantId,
-            queueName = queueName,
-            eventType = MessageTraceEventType.MOVED_TO_DLQ,
-            timestamp = Instant.now(),
-            metadata = metadata + mapOf("dlqName" to dlqName, "reason" to reason),
-            traceId = traceId,
-            spanId = UUID.randomUUID().toString()
-        )
-        
         return messageTraceRepository.recordEvent(event)
     }
 

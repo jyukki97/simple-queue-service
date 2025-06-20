@@ -8,6 +8,7 @@ import queueService, {
   MessagePreview,
   MessageResponse
 } from '../services/queueService';
+import StorageMessagesView from './StorageMessagesView';
 import './QueueManagement.css';
 
 const QueueManagement: React.FC = () => {
@@ -21,6 +22,7 @@ const QueueManagement: React.FC = () => {
   const [showPeekModal, setShowPeekModal] = useState<string | null>(null);
   const [showReceiveModal, setShowReceiveModal] = useState<string | null>(null);
   const [showStatsModal, setShowStatsModal] = useState<string | null>(null);
+  const [storageViewVisible, setStorageViewVisible] = useState<string | null>(null);
   const [peekedMessages, setPeekedMessages] = useState<MessagePreview[]>([]);
   const [receivedMessages, setReceivedMessages] = useState<MessageResponse[]>([]);
   const [newQueue, setNewQueue] = useState({
@@ -251,16 +253,6 @@ const QueueManagement: React.FC = () => {
 
   const handleShowStats = (queueName: string) => {
     setShowStatsModal(queueName);
-  };
-
-  const handleCloseModal = () => {
-    setShowCreateForm(false);
-    setShowMessageForm(null);
-    setShowBulkMessageForm(null);
-    setShowPeekModal(null);
-    setShowReceiveModal(null);
-    setShowStatsModal(null);
-    setError(null);
   };
 
   const formatDate = (dateString: string) => {
@@ -761,6 +753,13 @@ const QueueManagement: React.FC = () => {
               >
                 📥 메시지 수신
               </button>
+              <button 
+                className="action-btn storage"
+                onClick={() => setStorageViewVisible(queue.queueName)}
+                title="계층별 메시지 보기"
+              >
+                🗂️ 스토리지 계층
+              </button>
             </div>
           </div>
         );
@@ -778,6 +777,15 @@ const QueueManagement: React.FC = () => {
             ➕ 첫 번째 큐 생성하기
           </button>
         </div>
+      )}
+
+      {/* 스토리지 계층별 메시지 보기 모달 */}
+      {storageViewVisible && (
+        <StorageMessagesView
+          queueName={storageViewVisible}
+          visible={true}
+          onClose={() => setStorageViewVisible(null)}
+        />
       )}
     </div>
   );

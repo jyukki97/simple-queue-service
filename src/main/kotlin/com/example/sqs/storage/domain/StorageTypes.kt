@@ -12,64 +12,24 @@ enum class StorageTier {
 }
 
 /**
- * 계층화 정책 타입
- */
-enum class TieringPolicyType {
-    TIME_BASED,     // 시간 기반
-    CAPACITY_BASED, // 용량 기반
-    ACCESS_PATTERN  // 접근 패턴 기반
-}
-
-/**
- * 큐 타입별 처리 전략
- */
-enum class QueueType {
-    FIFO,     // 순서 보장 (모든 계층 검색)
-    STANDARD  // 최적 성능 (핫 우선)
-}
-
-/**
  * 메시지 위치 정보
  */
 data class MessageLocation(
-    val messageId: String,
     val tier: StorageTier,
-    val lastAccessTime: Instant,
-    val accessCount: Long = 0,
-    val migrationHistory: List<TierMigrationRecord> = emptyList()
+    val lastMovedAt: Instant,
+    val createdAt: Instant
 )
 
 /**
  * 계층 이관 기록
  */
 data class TierMigrationRecord(
+    val messageId: String,
     val fromTier: StorageTier,
     val toTier: StorageTier,
-    val migratedAt: Instant,
+    val timestamp: Instant,
     val reason: String,
-    val batchId: String? = null
-)
-
-/**
- * 계층화 정책 설정
- */
-data class TieringPolicy(
-    val type: TieringPolicyType,
-    val hotToWarmThreshold: TieringThreshold,
-    val warmToColdThreshold: TieringThreshold,
-    val checkIntervalSeconds: Long = 300, // 5분
-    val batchSize: Int = 1000,
-    val enabled: Boolean = true
-)
-
-/**
- * 계층 이관 임계값
- */
-data class TieringThreshold(
-    val maxAgeSeconds: Long? = null,
-    val maxCapacityPercent: Int? = null,
-    val minAccessCount: Long? = null,
-    val maxMemoryUsageMB: Long? = null
+    val size: Long
 )
 
 /**
@@ -84,6 +44,15 @@ data class TierMetrics(
     val migrationRate: Double,
     val errorRate: Double,
     val lastUpdated: Instant
+)
+
+/**
+ * 배치 결과
+ */
+data class BatchResult(
+    val successCount: Int,
+    val failureCount: Int,
+    val errors: List<String>
 )
 
 /**

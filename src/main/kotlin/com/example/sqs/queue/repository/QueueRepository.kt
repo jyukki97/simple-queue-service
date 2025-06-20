@@ -12,6 +12,7 @@ interface QueueRepository {
     fun existsByTenantIdAndQueueName(tenantId: String, queueName: String): Mono<Boolean>
     fun findByTenantId(tenantId: String, limit: Int, offset: Int, namePattern: String?): Flux<Queue>
     fun findAllQueues(): Flux<Queue>
+    fun findAllFifoQueues(): Flux<Queue>
     fun delete(queue: Queue): Mono<Void>
     fun getQueueStats(queue: Queue): Mono<QueueStatsResponse>
     fun getQueueStatistics(queue: Queue): Mono<QueueStatistics>

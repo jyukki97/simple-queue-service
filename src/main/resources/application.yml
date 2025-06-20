@@ -64,6 +64,13 @@ app:
       batch-size: 1000
       hot-to-warm-age-seconds: 3600    # 1시간
       warm-to-cold-age-seconds: 86400  # 24시간
+      # FIFO 큐 전용 설정
+      fifo:
+        hot-max-count: 100          # Hot Storage 최대 메시지 개수
+        warm-max-count: 1000        # Warm Storage 최대 메시지 개수
+        hot-time-threshold-hours: 1  # Hot → Warm 이관 시간 임계값
+        warm-time-threshold-hours: 24 # Warm → Cold 이관 시간 임계값
+        enable-hot-warm-swap: true   # Hot-Warm 스왑 활성화
   
   # Redis 성능 최적화 설정
   redis:

@@ -1,33 +1,18 @@
 package com.example.sqs.message.service
 
-import com.example.sqs.message.domain.Message
-import com.example.sqs.message.domain.MessagePreview
-import com.example.sqs.message.domain.SendMessageRequest
-import com.example.sqs.message.domain.SendMessageResponse
-import com.example.sqs.message.domain.ReceiveMessageRequest
-import com.example.sqs.message.domain.MessageResponse
-import com.example.sqs.message.domain.SendMessageBatchRequest
-import com.example.sqs.message.domain.SendMessageBatchResponse
-import com.example.sqs.message.domain.BatchMessageResponse
-import com.example.sqs.message.domain.BatchMessageFailure
-import com.example.sqs.message.domain.BatchMessageRequest
-import com.example.sqs.message.domain.DeleteMessageBatchRequest
-import com.example.sqs.message.domain.DeleteMessageBatchResponse
+import com.example.sqs.config.QueueProperties
+import com.example.sqs.message.domain.*
 import com.example.sqs.message.repository.MessageRepository
-import com.example.sqs.queue.service.QueueService
-import com.example.sqs.tracing.service.MessageTraceService
 import com.example.sqs.metrics.service.MetricsService
 import com.example.sqs.performance.compression.MessageCompressionService
-import com.example.sqs.performance.partitioning.QueuePartitioningService
-import com.example.sqs.performance.batch.RedisBatchService
 import com.example.sqs.performance.monitoring.PerformanceMonitoringService
-import com.example.sqs.config.QueueProperties
+import com.example.sqs.performance.partitioning.QueuePartitioningService
+import com.example.sqs.queue.service.QueueService
+import com.example.sqs.tracing.service.MessageTraceService
 import org.springframework.stereotype.Service
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import java.time.Instant
-import java.util.*
-import java.util.concurrent.atomic.AtomicLong
 
 @Service
 class MessageService(
@@ -37,24 +22,22 @@ class MessageService(
     private val metricsService: MetricsService,
     private val compressionService: MessageCompressionService,
     private val partitioningService: QueuePartitioningService,
-    private val batchService: RedisBatchService,
     private val performanceMonitoringService: PerformanceMonitoringService,
+    private val unifiedMessageService: UnifiedMessageService,
     private val queueProperties: QueueProperties
 ) {
-    
-    private val partitionCounter = AtomicLong(0)
 
     /**
      * 큐에 메시지를 전송합니다 (성능 최적화 적용)
      */
     fun sendMessage(tenantId: String, queueName: String, request: SendMessageRequest): Mono<SendMessageResponse> {
         val traceId = messageTraceService.generateTraceId()
-        
+
         return queueService.findQueue(tenantId, queueName)
             .flatMap { queue ->
                 // 메시지 압축 처리
                 val (messageBody, compressed) = processMessageCompression(request.messageBody)
-                
+
                 // 파티셔닝 적용
                 val targetQueueName = if (queueProperties.enablePartitioning) {
                     val partitionNumber = getPartitionForMessage(request.messageBody)
@@ -62,13 +45,13 @@ class MessageService(
                 } else {
                     queueName
                 }
-                
+
                 val visibleAt = if (request.delaySeconds > 0) {
                     Instant.now().plusSeconds(request.delaySeconds.toLong())
                 } else {
                     Instant.now()
                 }
-                
+
                 val enhancedAttributes = request.attributes.toMutableMap().apply {
                     if (compressed) {
                         put("_compressed", "true")
@@ -76,53 +59,56 @@ class MessageService(
                     }
                     put("_partition", targetQueueName)
                 }
-                
+
                 val message = Message(
                     tenantId = tenantId,
                     queueName = targetQueueName,
                     messageBody = messageBody,
                     attributes = enhancedAttributes,
                     sentTimestamp = Instant.now(),
-                    visibleAt = visibleAt
+                    visibleAt = visibleAt,
+                    delaySeconds = request.delaySeconds
                 )
-                
-                messageRepository.sendMessage(queue, message)
-                    .flatMap { sentMessage ->
-                        // 성능 메트릭 기록
-                        performanceMonitoringService.recordMessageSize(
-                            tenantId, queueName, messageBody.length
+
+                // 통합된 메시지 서비스 사용 (FIFO/Standard 구분 없이)
+                val sendMessageMono = unifiedMessageService.sendMessageToHot(queue, message)
+
+                sendMessageMono.flatMap { sentMessage ->
+                    // 성능 메트릭 기록
+                    performanceMonitoringService.recordMessageSize(
+                        tenantId, queueName, messageBody.length
+                    )
+
+                    if (compressed) {
+                        val compressionRatio = compressionService.calculateCompressionRatio(
+                            request.messageBody.length, messageBody.length
                         )
-                        
-                        if (compressed) {
-                            val compressionRatio = compressionService.calculateCompressionRatio(
-                                request.messageBody.length, messageBody.length
-                            )
-                            performanceMonitoringService.recordCompressionRatio(
-                                tenantId, queueName, compressionRatio
-                            )
-                        }
-                        
-                        // 기존 메트릭 기록
-                        metricsService.recordMessageSent(tenantId, queueName, request.messageBody.length)
-                        
-                        // 메시지 전송 추적 이벤트 기록
-                        messageTraceService.recordMessageSent(
-                            messageId = sentMessage.messageId,
-                            tenantId = tenantId,
-                            queueName = queueName,
-                            traceId = traceId,
-                            metadata = mapOf(
-                                "messageSize" to request.messageBody.length,
-                                "compressedSize" to messageBody.length,
-                                "compressed" to compressed,
-                                "delaySeconds" to request.delaySeconds,
-                                "attributeCount" to request.attributes.size,
-                                "partition" to targetQueueName
-                            )
-                        ).thenReturn(sentMessage)
+                        performanceMonitoringService.recordCompressionRatio(
+                            tenantId, queueName, compressionRatio
+                        )
                     }
+
+                    // 기존 메트릭 기록
+                    metricsService.recordMessageSent(tenantId, queueName, request.messageBody.length)
+
+                    // 메시지 전송 추적 이벤트 기록
+                    messageTraceService.recordMessageSent(
+                        messageId = sentMessage.messageId,
+                        tenantId = tenantId,
+                        queueName = queueName,
+                        traceId = traceId,
+                        metadata = mapOf(
+                            "messageSize" to request.messageBody.length,
+                            "compressedSize" to messageBody.length,
+                            "compressed" to compressed,
+                            "delaySeconds" to request.delaySeconds,
+                            "attributeCount" to request.attributes.size,
+                            "partition" to targetQueueName
+                        )
+                    ).thenReturn(sentMessage)
+                }
                     .map { SendMessageResponse(messageId = it.messageId) }
-                    .doOnSuccess { 
+                    .doOnSuccess {
                         performanceMonitoringService.incrementCounter("sendMessage", tenantId, queueName)
                     }
                     .doOnError { error ->
@@ -138,12 +124,12 @@ class MessageService(
      */
     fun sendMessageBatch(tenantId: String, queueName: String, request: SendMessageBatchRequest): Mono<SendMessageBatchResponse> {
         val startTime = System.currentTimeMillis()
-        
+
         return queueService.findQueue(tenantId, queueName)
             .flatMap { queue ->
                 val successful = mutableListOf<BatchMessageResponse>()
                 val failed = mutableListOf<BatchMessageFailure>()
-                
+
                 // 배치 처리를 위한 메시지 그룹핑 (파티션별)
                 val messagesByPartition = if (queueProperties.enablePartitioning) {
                     request.messages.groupBy { batchRequest ->
@@ -152,7 +138,7 @@ class MessageService(
                 } else {
                     mapOf(0 to request.messages)
                 }
-                
+
                 // 파티션별로 배치 처리
                 Flux.fromIterable(messagesByPartition.entries)
                     .flatMap { (partitionNumber, messages) ->
@@ -161,18 +147,18 @@ class MessageService(
                         } else {
                             queueName
                         }
-                        
+
                         processBatchMessages(tenantId, targetQueueName, queue, messages, successful, failed)
                     }
                     .then(
                         Mono.fromCallable {
                             val processingTime = System.currentTimeMillis() - startTime
-                            
+
                             // 배치 처리 효율성 모니터링
                             performanceMonitoringService.recordBatchEfficiency(
                                 tenantId, "sendMessage", request.messages.size, processingTime
                             )
-                            
+
                             SendMessageBatchResponse(
                                 successful = successful,
                                 failed = failed
@@ -191,29 +177,32 @@ class MessageService(
     }
 
     /**
-     * 큐에서 메시지를 수신합니다
+     * 큐에서 메시지를 수신합니다 (FIFO 최적화 적용)
      */
     fun receiveMessages(tenantId: String, queueName: String, request: ReceiveMessageRequest): Flux<MessageResponse> {
         return queueService.findQueue(tenantId, queueName)
             .flatMapMany { queue ->
-                messageRepository.receiveMessages(queue, request.maxNumberOfMessages, request.visibilityTimeoutSeconds)
-                    .flatMap { message ->
-                        // 메트릭 기록 (처리 시간은 임의로 계산)
-                        val processingTime = kotlin.random.Random.nextLong(100, 1000)
-                        metricsService.recordMessageReceived(tenantId, queueName, processingTime)
-                        
-                        // 메시지 수신 추적 이벤트 기록
-                        messageTraceService.recordMessageReceived(
-                            messageId = message.messageId,
-                            tenantId = tenantId,
-                            queueName = queueName,
-                            receiptHandle = message.receiptHandle!!,
-                            metadata = mapOf(
-                                "receiveCount" to message.receiveCount,
-                                "visibilityTimeout" to (request.visibilityTimeoutSeconds ?: queue.attributes.visibilityTimeoutSeconds)
-                            )
-                        ).thenReturn(message)
-                    }
+                // 통합된 메시지 서비스 사용 (FIFO/Standard 구분 없이)
+                val messageFlux = unifiedMessageService.receiveMessages(queue, request.maxNumberOfMessages, request.visibilityTimeoutSeconds)
+
+                messageFlux.flatMap { message ->
+                    // 메트릭 기록 (처리 시간은 임의로 계산)
+                    val processingTime = kotlin.random.Random.nextLong(100, 1000)
+                    metricsService.recordMessageReceived(tenantId, queueName, processingTime)
+
+                    // 메시지 수신 추적 이벤트 기록
+                    messageTraceService.recordMessageReceived(
+                        messageId = message.messageId,
+                        tenantId = tenantId,
+                        queueName = queueName,
+                        receiptHandle = message.receiptHandle!!,
+                        metadata = mapOf(
+                            "receiveCount" to message.receiveCount,
+                            "visibilityTimeout" to (request.visibilityTimeoutSeconds ?: queue.attributes.visibilityTimeoutSeconds),
+                            "queueType" to if (queue.attributes.fifoQueue) "FIFO" else "Standard"
+                        )
+                    ).thenReturn(message)
+                }
                     .map { message ->
                         MessageResponse(
                             messageId = message.messageId,
@@ -235,7 +224,7 @@ class MessageService(
                 // 먼저 메시지 정보를 조회해서 messageId를 얻은 후 삭제
                 // 여기서는 간단히 receiptHandle을 사용 (실제로는 Redis에서 조회 필요)
                 val messageId = receiptHandle.split(":").getOrNull(0) ?: receiptHandle
-                
+
                 messageRepository.deleteMessage(queue, receiptHandle)
                     .then(
                         Mono.fromRunnable<Void> {
@@ -273,7 +262,7 @@ class MessageService(
             .flatMap { queue ->
                 val successful = mutableListOf<String>()
                 val failed = mutableListOf<BatchMessageFailure>()
-                
+
                 Flux.fromIterable(request.receiptHandles)
                     .flatMap { receiptHandle ->
                         messageRepository.deleteMessage(queue, receiptHandle)
@@ -286,16 +275,15 @@ class MessageService(
                                         message = e.message ?: "잘못된 receipt handle입니다"
                                     )
                                 )
-                                Mono.empty<Void>()
+                                Mono.empty()
                             }
                     }
-                    .then()
-                    .map {
+                    .then(Mono.fromCallable {
                         DeleteMessageBatchResponse(
                             successful = successful,
                             failed = failed
                         )
-                    }
+                    })
             }
     }
 
@@ -304,7 +292,7 @@ class MessageService(
      */
     fun peekMessages(tenantId: String, queueName: String, maxMessages: Int = 10): Flux<MessagePreview> {
         val validMaxMessages = maxMessages.coerceIn(1, 10)
-        
+
         return queueService.findQueue(tenantId, queueName)
             .flatMapMany { queue ->
                 messageRepository.peekMessages(queue, validMaxMessages)
@@ -321,22 +309,23 @@ class MessageService(
                     }
             }
     }
-    
+
     // ========== 성능 최적화 헬퍼 메서드들 ==========
-    
+
     /**
      * 메시지 압축 처리
      */
     private fun processMessageCompression(messageBody: String): Pair<String, Boolean> {
-        return if (queueProperties.enableCompression && 
-                   compressionService.shouldCompress(messageBody, queueProperties.compressionThreshold)) {
+        return if (queueProperties.enableCompression &&
+            compressionService.shouldCompress(messageBody, queueProperties.compressionThreshold)
+        ) {
             val compressed = compressionService.compress(messageBody)
             compressed.toString(Charsets.ISO_8859_1) to true
         } else {
             messageBody to false
         }
     }
-    
+
     /**
      * 메시지 압축 해제
      */
@@ -348,7 +337,7 @@ class MessageService(
             messageBody
         }
     }
-    
+
     /**
      * 메시지 파티션 결정
      */
@@ -360,7 +349,7 @@ class MessageService(
             0
         }
     }
-    
+
     /**
      * 배치 메시지 처리
      */
@@ -377,20 +366,20 @@ class MessageService(
                 try {
                     // 메시지 압축 처리
                     val (messageBody, compressed) = processMessageCompression(batchRequest.messageBody)
-                    
+
                     val visibleAt = if (batchRequest.delaySeconds > 0) {
                         Instant.now().plusSeconds(batchRequest.delaySeconds.toLong())
                     } else {
                         Instant.now()
                     }
-                    
+
                     val enhancedAttributes = batchRequest.attributes.toMutableMap()
                     if (compressed) {
                         enhancedAttributes["_compressed"] = "true"
                         enhancedAttributes["_original_size"] = batchRequest.messageBody.length.toString()
                     }
                     enhancedAttributes["_partition"] = targetQueueName
-                    
+
                     val message = Message(
                         tenantId = tenantId,
                         queueName = targetQueueName,
@@ -399,7 +388,7 @@ class MessageService(
                         sentTimestamp = Instant.now(),
                         visibleAt = visibleAt
                     )
-                    
+
                     messageRepository.sendMessage(queue, message)
                         .map { sentMessage ->
                             synchronized(successful) {
@@ -410,12 +399,12 @@ class MessageService(
                                     )
                                 )
                             }
-                            
+
                             // 성능 메트릭 기록
                             performanceMonitoringService.recordMessageSize(
                                 tenantId, targetQueueName, messageBody.length
                             )
-                            
+
                             if (compressed) {
                                 val compressionRatio = compressionService.calculateCompressionRatio(
                                     batchRequest.messageBody.length, messageBody.length

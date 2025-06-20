@@ -237,3 +237,175 @@ GET /api/v1/queues/my-queue/messages?maxNumberOfMessages=10
 ```
 
 이 핫/콜드 스토리지 시스템은 AWS SQS의 기능을 향상시키면서도 비용 효율적인 메시지 저장 및 처리를 제공합니다.
+
+---
+
+# FIFO Queue Hot/Cold Storage 개선 스펙
+
+## 📋 현재 문제점
+
+### FIFO Queue의 성능 이슈
+- **Cold Storage 의존성**: 순서 보장을 위해 항상 Cold부터 확인해야 함
+- **성능 저하**: Hot Storage의 이점을 활용할 수 없음
+- **복잡성**: 다층 스토리지 조회로 인한 로직 복잡성
+
+### 기존 방식의 한계
+```
+Hot: [msg5, msg4, msg3] (최신 3개)
+Cold: [msg2, msg1]      (오래된 메시지들)
+
+FIFO 수신 시: Cold부터 확인 → msg1, msg2 → Hot 확인 → msg3, msg4, msg5
+```
+→ **Cold를 항상 확인해야 하므로 성능 이점 없음**
+
+## 🎯 해결 방안
+
+### 핵심 아이디어: "순서대로 접근할 수 있게 배치"
+```
+Hot: [msg1, msg2, msg3] (오래된 3개 유지)
+Cold: [msg5, msg4]      (최신 메시지들을 밀어냄)
+
+FIFO 수신 시: Hot만 확인 → msg1, msg2, msg3 (순서 보장됨)
+```
+→ **Hot만 확인하면 되므로 성능 최적화 달성!**
+
+## 📖 상세 스펙
+
+### 1. 이관 정책 (Tiering Policy)
+
+#### Standard Queue (기존 유지)
+```
+Hot (Redis Memory)  → Warm (Redis Disk)  → Cold (File System)
+   1시간 경과           24시간 경과            14일 후 삭제
+   오래된 메시지부터 이관
+```
+
+#### FIFO Queue (신규 개선)
+```
+Hot (Redis Memory)  → Warm (Redis Disk)  → Cold (File System)
+   100개 초과 OR        1000개 초과 OR        14일 후 삭제
+   1시간 경과           24시간 경과            
+   최신 메시지부터 이관  최신 메시지부터 이관
+```
+
+### 2. FIFO 이관 규칙
+
+#### Hot → Warm 이관 조건
+1. **개수 조건**: Hot에 100개 초과 메시지 존재
+2. **시간 조건**: 가장 오래된 메시지가 1시간 초과
+3. **이관 대상**: 
+   - 개수 초과 시: 최신 메시지들 (개수 - 100)개
+   - 시간 초과 시: 1시간 초과된 오래된 메시지들
+
+#### Warm → Cold 이관 조건
+1. **개수 조건**: Warm에 1000개 초과 메시지 존재  
+2. **시간 조건**: 가장 오래된 메시지가 24시간 초과
+3. **이관 대상**:
+   - 개수 초과 시: 최신 메시지들 (개수 - 1000)개
+   - 시간 초과 시: 24시간 초과된 오래된 메시지들
+
+### 3. 스왑 메커니즘
+
+#### Hot-Warm 스왑
+```
+상황: Hot이 가득 찼지만 Warm에 더 오래된 메시지가 있는 경우
+
+Before:
+Hot:  [msg100, msg99, msg98, ..., msg1] (가득 참)
+Warm: [msg50, msg49, msg48, ...]        (더 오래된 메시지 존재)
+
+After:
+Hot:  [msg50, msg49, msg48, ..., msg1]  (오래된 순서 유지)
+Warm: [msg100, msg99, msg98, ...]       (최신 메시지들이 이관됨)
+```
+
+#### 스왑 조건
+1. Hot이 개수 한계에 도달
+2. Warm에 Hot보다 오래된 메시지가 존재
+3. 순서 보장을 위해 Hot에 가장 오래된 메시지들 유지 필요
+
+### 4. 수신 최적화
+
+#### FIFO Queue 수신 전략
+```kotlin
+fun receiveMessagesFifo(queue: Queue, maxMessages: Int): Flux<Message> {
+    return receiveFromHot(queue, maxMessages)
+        .switchIfEmpty(receiveFromWarm(queue, maxMessages))
+        .switchIfEmpty(receiveFromCold(queue, maxMessages))
+}
+```
+
+- **우선순위**: Hot → Warm → Cold
+- **Hot 우선**: 대부분의 경우 Hot에서만 수신 (성능 최적화)
+- **순서 보장**: Hot에 가장 오래된 메시지들이 있으므로 순서 보장
+
+### 5. 성능 목표
+
+#### 응답 시간
+- **Hot 수신**: 0.8ms (기존과 동일)
+- **Warm 수신**: 8ms (기존과 동일)
+- **Cold 수신**: 45ms (기존과 동일)
+
+#### 메모리 효율성
+- **Hot 메모리**: 100개 * 평균 메시지 크기 (예측 가능)
+- **Warm 메모리**: 1000개 * 평균 메시지 크기 (제한됨)
+- **전체 메모리**: 기존 대비 50% 절약 예상
+
+### 6. 모니터링 메트릭
+
+#### 새로운 메트릭
+- `fifo_hot_message_count`: Hot Storage 메시지 개수
+- `fifo_warm_message_count`: Warm Storage 메시지 개수
+- `fifo_swap_operations`: 스왑 연산 횟수
+- `fifo_hot_hit_ratio`: Hot에서 수신한 메시지 비율
+
+#### 알림 조건
+- Hot Storage 사용률 > 90%
+- 스왑 연산 빈도 > 분당 10회
+- Hot Hit Ratio < 80%
+
+## 🔧 구현 계획
+
+### Phase 1: 기본 구조 (1일)
+- [ ] `FifoTieringPolicy` 인터페이스 설계
+- [ ] 개수 기반 이관 로직 구현
+- [ ] 시간 기반 이관 로직 구현
+
+### Phase 2: 스왑 메커니즘 (1일)
+- [ ] Hot-Warm 스왑 조건 검사
+- [ ] 스왑 연산 구현
+- [ ] 원자성 보장 (트랜잭션)
+
+### Phase 3: 수신 최적화 (0.5일)
+- [ ] FIFO 전용 수신 로직 분리
+- [ ] Hot 우선 수신 구현
+- [ ] Fallback 메커니즘
+
+### Phase 4: 테스트 & 모니터링 (0.5일)
+- [ ] 단위 테스트 작성
+- [ ] 성능 테스트
+- [ ] 메트릭 수집 및 대시보드
+
+## 📊 예상 효과
+
+### 성능 향상
+- **FIFO 수신 속도**: 45ms → 0.8ms (94% 개선)
+- **메모리 사용량**: 제한적이고 예측 가능
+- **Hot Hit Ratio**: 95% 이상 예상
+
+### 운영 개선
+- **순서 보장**: 완벽한 FIFO 순서 유지
+- **확장성**: 메시지 개수 증가에도 성능 유지
+- **모니터링**: 명확한 메트릭과 알림
+
+## 🚨 주의사항
+
+### 구현 시 고려사항
+- **원자성**: 스왑 연산의 원자성 보장 필요
+- **일관성**: 이관 중 메시지 순서 변경 방지
+- **성능**: 스왑 연산이 너무 빈번하면 오버헤드 발생
+
+### 롤백 계획
+- 기존 Standard 방식으로 즉시 전환 가능
+- 이관된 메시지들의 복구 메커니즘 준비
+- A/B 테스트를 통한 점진적 적용

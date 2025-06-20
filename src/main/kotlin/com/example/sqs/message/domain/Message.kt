@@ -15,7 +15,8 @@ data class Message(
     val firstReceiveTimestamp: Instant? = null,
     val receiveCount: Int = 0,
     val visibleAt: Instant,
-    val receiptHandle: String? = null
+    val receiptHandle: String? = null,
+    val delaySeconds: Int = 0
 ) {
     init {
         require(messageBody.toByteArray().size <= 262144) { "메시지 크기는 256KB를 초과할 수 없습니다" }

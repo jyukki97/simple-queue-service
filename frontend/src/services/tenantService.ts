@@ -61,7 +61,7 @@ export interface ApiResponse<T> {
 }
 
 class TenantService {
-  private adminApiKey = 'admin-api-key'; // TODO: 실제 환경에서는 안전한 방식으로 관리
+  private adminApiKey = 'test-api-key'; // TODO: 실제 환경에서는 안전한 방식으로 관리
 
   private getHeaders() {
     return {

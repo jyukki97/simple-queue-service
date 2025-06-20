@@ -1,8 +1,11 @@
 package com.example.sqs.storage.service.impl
 
 import com.example.sqs.message.domain.Message
-import com.example.sqs.storage.domain.*
-import com.example.sqs.storage.service.*
+import com.example.sqs.storage.domain.BatchResult
+import com.example.sqs.storage.domain.StorageTier
+import com.example.sqs.storage.domain.TierMetrics
+import com.example.sqs.storage.service.StorageTierService
+import com.example.sqs.storage.service.StorageUsageInfo
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.reactive.awaitFirstOrNull
 import kotlinx.coroutines.reactor.awaitSingle
@@ -21,9 +24,9 @@ class HotStorageService(
     private val redisTemplate: ReactiveRedisTemplate<String, String>,
     private val objectMapper: ObjectMapper
 ) : StorageTierService {
-    
+
     override val tier = StorageTier.HOT
-    
+
     companion object {
         private const val HOT_MESSAGE_PREFIX = "hot:message:"
         private const val HOT_QUEUE_PREFIX = "hot:queue:"
@@ -31,51 +34,51 @@ class HotStorageService(
         private const val HOT_METRICS_KEY = "hot:metrics"
         private const val DEFAULT_TTL_HOURS = 1L
     }
-    
+
     override suspend fun saveMessage(message: Message): Boolean {
         return try {
-            val messageKey = HOT_MESSAGE_PREFIX + message.messageId
+            val messageKey = message.getMessageKey()
             val queueKey = HOT_QUEUE_PREFIX + "${message.tenantId}:${message.queueName}"
             val indexKey = HOT_QUEUE_INDEX_PREFIX + "${message.tenantId}:${message.queueName}"
-            
+
             val messageJson = objectMapper.writeValueAsString(message)
             val ttl = Duration.ofHours(DEFAULT_TTL_HOURS)
-            
+
             // 메시지 저장 (TTL 설정)
             redisTemplate.opsForValue()
                 .set(messageKey, messageJson, ttl)
                 .awaitSingle()
-            
+
             // 큐에 메시지 ID 추가 (FIFO 순서 보장)
             redisTemplate.opsForList()
                 .rightPush(queueKey, message.messageId)
                 .awaitSingle()
-            
+
             // 큐 TTL 연장
             redisTemplate.expire(queueKey, ttl).awaitSingle()
-            
+
             // 인덱스 업데이트 (빠른 조회용)
             redisTemplate.opsForZSet()
                 .add(indexKey, message.messageId, message.sentTimestamp.epochSecond.toDouble())
                 .awaitSingle()
-            
+
             redisTemplate.expire(indexKey, ttl).awaitSingle()
-            
+
             // 메트릭 업데이트
             updateMetrics(1, 0)
-            
+
             true
         } catch (e: Exception) {
             updateMetrics(0, 1)
             false
         }
     }
-    
+
     override suspend fun saveBatch(messages: List<Message>): BatchResult {
         var successful = 0
         var failed = 0
         val errors = mutableListOf<String>()
-        
+
         messages.forEach { message ->
             try {
                 if (saveMessage(message)) {
@@ -89,37 +92,37 @@ class HotStorageService(
                 errors.add("Error saving message ${message.messageId}: ${e.message}")
             }
         }
-        
+
         return BatchResult(successful, failed, errors)
     }
-    
+
     override suspend fun getMessage(messageId: String): Message? {
         return try {
             val messageKey = HOT_MESSAGE_PREFIX + messageId
             val messageJson = redisTemplate.opsForValue()
                 .get(messageKey)
                 .awaitFirstOrNull()
-            
-            messageJson?.let { 
+
+            messageJson?.let {
                 objectMapper.readValue(it, Message::class.java)
             }
         } catch (e: Exception) {
             null
         }
     }
-    
+
     override suspend fun getOldestMessage(queueName: String): Message? {
         return try {
             val queueKey = HOT_QUEUE_PREFIX + queueName
-            
+
             // FIFO: 가장 왼쪽(오래된) 메시지 ID 조회
             val messageId = redisTemplate.opsForList()
                 .leftPop(queueKey)
                 .awaitFirstOrNull()
-            
+
             messageId?.let { id ->
                 val message = getMessage(id)
-                
+
                 // 메시지가 존재하지 않으면 다음 메시지 시도
                 if (message == null) {
                     getOldestMessage(queueName)
@@ -131,17 +134,17 @@ class HotStorageService(
             null
         }
     }
-    
+
     override suspend fun getMessages(queueName: String, maxCount: Int): List<Message> {
         return try {
             val queueKey = HOT_QUEUE_PREFIX + queueName
             val messages = mutableListOf<Message>()
-            
+
             repeat(maxCount) {
                 val messageId = redisTemplate.opsForList()
                     .leftPop(queueKey)
                     .awaitFirstOrNull()
-                
+
                 if (messageId != null) {
                     getMessage(messageId)?.let { message ->
                         messages.add(message)
@@ -150,32 +153,32 @@ class HotStorageService(
                     return@repeat
                 }
             }
-            
+
             messages
         } catch (e: Exception) {
             emptyList()
         }
     }
-    
+
     override suspend fun deleteMessage(messageId: String): Boolean {
         return try {
             val messageKey = HOT_MESSAGE_PREFIX + messageId
             val deleted = redisTemplate.opsForValue()
                 .delete(messageKey)
                 .awaitSingle()
-            
+
             updateMetrics(-1, 0)
             deleted
         } catch (e: Exception) {
             false
         }
     }
-    
+
     override suspend fun deleteBatch(messageIds: List<String>): BatchResult {
         var successful = 0
         var failed = 0
         val errors = mutableListOf<String>()
-        
+
         messageIds.forEach { messageId ->
             try {
                 if (deleteMessage(messageId)) {
@@ -189,16 +192,16 @@ class HotStorageService(
                 errors.add("Error deleting message $messageId: ${e.message}")
             }
         }
-        
+
         return BatchResult(successful, failed, errors)
     }
-    
+
     override suspend fun getExpiredMessages(maxAge: Duration, limit: Int): List<Message> {
         return try {
             val cutoffTime = Instant.now().minus(maxAge)
             val pattern = HOT_MESSAGE_PREFIX + "*"
             val expiredMessages = mutableListOf<Message>()
-            
+
             // 패턴 매칭으로 모든 핫 메시지 키 조회
             redisTemplate.scan()
                 .filter { it.startsWith(HOT_MESSAGE_PREFIX) }
@@ -210,7 +213,7 @@ class HotStorageService(
                         val messageJson = redisTemplate.opsForValue()
                             .get(key)
                             .awaitFirstOrNull()
-                        
+
                         messageJson?.let { json ->
                             val message = objectMapper.readValue(json, Message::class.java)
                             if (message.sentTimestamp.isBefore(cutoffTime)) {
@@ -221,19 +224,19 @@ class HotStorageService(
                         // 개별 메시지 오류는 무시하고 계속 진행
                     }
                 }
-            
+
             expiredMessages
         } catch (e: Exception) {
             emptyList()
         }
     }
-    
+
     override suspend fun getMetrics(): TierMetrics {
         return try {
             val metricsJson = redisTemplate.opsForValue()
                 .get(HOT_METRICS_KEY)
                 .awaitFirstOrNull()
-            
+
             if (metricsJson != null) {
                 objectMapper.readValue(metricsJson, TierMetrics::class.java)
             } else {
@@ -244,13 +247,13 @@ class HotStorageService(
             createDefaultMetrics()
         }
     }
-    
+
     override suspend fun getUsageInfo(): StorageUsageInfo {
         return try {
             // 간단한 메모리 사용량 추정
             val messageCount = getMessageCount()
             val estimatedUsage = messageCount * 1024 // 1KB per message 추정
-            
+
             StorageUsageInfo(
                 tier = StorageTier.HOT,
                 totalCapacityBytes = 1000000000, // 1GB 기본값
@@ -270,7 +273,7 @@ class HotStorageService(
             )
         }
     }
-    
+
     private suspend fun getMessageCount(): Long {
         return try {
             redisTemplate.scan()
@@ -281,7 +284,7 @@ class HotStorageService(
             0L
         }
     }
-    
+
     private fun parseMemoryInfo(info: String, key: String): Long {
         return try {
             val line = info.lines().find { it.startsWith(key) }
@@ -290,7 +293,7 @@ class HotStorageService(
             0L
         }
     }
-    
+
     private suspend fun updateMetrics(messageCountDelta: Int, errorCountDelta: Int) {
         try {
             val currentMetrics = getMetrics()
@@ -299,7 +302,7 @@ class HotStorageService(
                 errorRate = currentMetrics.errorRate + errorCountDelta,
                 lastUpdated = Instant.now()
             )
-            
+
             val metricsJson = objectMapper.writeValueAsString(updatedMetrics)
             redisTemplate.opsForValue()
                 .set(HOT_METRICS_KEY, metricsJson, Duration.ofHours(24))
@@ -308,7 +311,7 @@ class HotStorageService(
             // 메트릭 업데이트 실패는 로깅만 하고 진행
         }
     }
-    
+
     private fun createDefaultMetrics(): TierMetrics {
         return TierMetrics(
             tier = StorageTier.HOT,
