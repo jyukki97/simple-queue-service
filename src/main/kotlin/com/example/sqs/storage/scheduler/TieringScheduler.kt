@@ -147,22 +147,24 @@ class TieringScheduler(
             operations.add(moveOperation)
         }
 
-        // Warm → Cold 이동
+        // Warm → Cold 이동 (배치 처리로 개선)
         if (policy.shouldMoveWarmToCold(warmStats)) {
             logger.info("$queueType Warm→Cold 이동 시작: ${queue.queueName}")
             val moveOperation = policy.getMessagesToMoveWarmToCold(queue, warmStats)
-                .flatMap { messageId ->
-                    storageStatsService.moveMessage(messageId, "WARM", "COLD", queue)
-                        .doOnSuccess {
-                            logger.debug("$queueType 메시지 이동 완료: $messageId (WARM→COLD)")
-                        }
+                .collectList()
+                .flatMap { messageIds ->
+                    if (messageIds.isNotEmpty()) {
+                        logger.info("$queueType Warm→Cold 배치 이동: ${queue.queueName}, ${messageIds.size}개 메시지")
+                        storageStatsService.moveMessagesBatchWarmToCold(messageIds, queue)
+                    } else {
+                        Mono.just(0L)
+                    }
                 }
-                .count()
                 .doOnNext { count ->
-                    logger.info("$queueType Warm→Cold 이동 완료: ${queue.queueName}, 이동된 메시지: $count")
+                    logger.info("$queueType Warm→Cold 배치 이동 완료: ${queue.queueName}, 이동된 메시지: ${count}개")
                     // TODO: 메트릭 기록 추가
                 }
-                .map { count -> "$queueType Warm→Cold: $count 메시지 이동" }
+                .map { count -> "$queueType Warm→Cold: ${count}개 메시지 배치 이동" }
 
             operations.add(moveOperation)
         }
@@ -188,7 +190,7 @@ class TieringScheduler(
                 .subscribeOn(Schedulers.boundedElastic())
                 .subscribe(
                     { count ->
-                        logger.info("WARM 계층 만료 메시지 정리 완료: $count 개")
+                        logger.info("WARM 계층 만료 메시지 정리 완료: ${count}개")
                     },
                     { error ->
                         logger.error("WARM 계층 만료 메시지 정리 중 오류 발생", error)

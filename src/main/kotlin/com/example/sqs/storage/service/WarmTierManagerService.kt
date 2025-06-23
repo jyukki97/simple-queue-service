@@ -153,20 +153,9 @@ class WarmTierManagerService(
      * 큐별 WARM 메시지 조회 (파티션된 큐 이름도 포함)
      */
     fun getWarmMessagesByQueue(tenantId: String, queueName: String, limit: Int = 100, offset: Int = 0): Flux<Message> {
-        // 기본 큐 이름으로 검색
-        val basicSearch = rocksDBService.getMessagesByQueue(tenantId, queueName, limit, offset)
-        
-        // 파티션된 큐 이름들로도 검색 (test-queue_partition_0, test-queue_partition_1, ...)
-        val partitionSearches = Flux.range(0, 4) // 파티션 수는 설정에 따라 조정
-            .flatMap { partitionNumber ->
-                val partitionedQueueName = "${queueName}_partition_${partitionNumber}"
-                rocksDBService.getMessagesByQueue(tenantId, partitionedQueueName, limit, offset)
-            }
-        
-        // 모든 결과를 합치고 중복 제거
-        return Flux.concat(basicSearch, partitionSearches)
-            .distinct { it.messageId }
-            .take(limit.toLong())
+        // RocksDB에서 직접 큐 이름과 파티션 패턴 매칭으로 검색
+        // getMessagesByQueue 메서드가 이미 파티션 패턴을 처리하므로 한 번만 호출
+        return rocksDBService.getMessagesByQueue(tenantId, queueName, limit, offset)
     }
 
     /**
@@ -184,6 +173,13 @@ class WarmTierManagerService(
     }
 
     /**
+     * 디버그: 처음 몇 개 메시지 정보 확인
+     */
+    fun debugFirstFewMessages(count: Int = 5): Mono<List<Map<String, String>>> {
+        return rocksDBService.debugFirstFewMessages(count)
+    }
+
+    /**
      * Redis에서 메시지 조회
      */
     private fun getMessageFromRedis(messageId: String): Mono<Message?> {
@@ -196,12 +192,18 @@ class WarmTierManagerService(
      * Redis에서 메시지 제거 (HOT 계층 큐에서)
      */
     private fun removeMessageFromRedis(messageId: String, tenantId: String, queueName: String): Mono<Void> {
+        // 파티션 4개에서 메시지 제거 시도 (Standard 큐는 어느 파티션에 있는지 모르므로)
+        val partitionCount = 4
+        
         return Flux.merge(
             // 메시지 본체 삭제
             redisTemplate.delete("message:$messageId"),
-            // HOT 큐에서 제거
-            redisTemplate.opsForList().remove("hot:queue:$tenantId:$queueName", 1, messageId),
-            // HOT 인덱스에서 제거
+            // 모든 파티션에서 제거 시도
+            Flux.range(0, partitionCount)
+                .flatMap { partitionNumber ->
+                    redisTemplate.opsForList().remove("hot:queue:$tenantId:${queueName}_partition_$partitionNumber", 1, messageId)
+                },
+            // HOT 인덱스에서 제거 (인덱스는 파티션별로 없는 것 같으니 그대로 유지)
             redisTemplate.opsForZSet().remove("hot:index:$tenantId:$queueName", messageId)
         ).then()
     }
@@ -256,6 +258,18 @@ class WarmTierManagerService(
                 updateMessageLocation(messageId, tier)
             }
             .then()
+    }
+
+    /**
+     * 큐의 모든 WARM 메시지 삭제
+     */
+    fun deleteAllQueueMessages(tenantId: String, queueName: String): Mono<Int> {
+        logger.info("큐 ${tenantId}:${queueName} WARM 계층 메시지 삭제 시작")
+        
+        return rocksDBService.deleteQueueMessages(tenantId, queueName)
+            .doOnNext { deletedCount ->
+                logger.info("큐 ${tenantId}:${queueName} WARM 계층에서 ${deletedCount}개 메시지 삭제 완료")
+            }
     }
 }
 

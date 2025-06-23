@@ -8,9 +8,12 @@ import com.example.sqs.storage.domain.TierMetrics
 import com.example.sqs.storage.service.StorageTierService
 import com.example.sqs.storage.service.StorageUsageInfo
 import com.fasterxml.jackson.databind.ObjectMapper
+import jakarta.annotation.PostConstruct
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.scheduling.annotation.EnableScheduling
 import org.springframework.stereotype.Service
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -22,6 +25,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantLock
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 
@@ -30,15 +34,18 @@ import java.util.zip.GZIPOutputStream
  * 장기 보관, 감사, 분석용 데이터를 압축하여 파일로 저장
  */
 @Service
+@EnableScheduling
 class ColdStorageService(
     private val objectMapper: ObjectMapper,
-    @Value("\${app.storage.cold.base-path:/tmp/sqs-cold-storage}")
+    @Value("\${app.storage.cold.base-path:./data/cold}")
     private val basePath: String
 ) : StorageTierService {
 
     override val tier = StorageTier.COLD
 
     private val metricsCache = ConcurrentHashMap<String, Any>()
+    private val fileLocks = ConcurrentHashMap<String, ReentrantLock>()
+    private val logger = LoggerFactory.getLogger(ColdStorageService::class.java)
 
     companion object {
         private const val MESSAGE_FILE_EXTENSION = ".json.gz"
@@ -54,21 +61,11 @@ class ColdStorageService(
 
     override suspend fun saveMessage(message: Message): Boolean = withContext(Dispatchers.IO) {
         try {
-            val messagePath = getMessagePath(message)
-            createDirectoryIfNotExists(messagePath.parent)
-
-            // 메시지를 압축하여 저장
-            val messageJson = objectMapper.writeValueAsString(message)
-            writeCompressedFile(messagePath, messageJson)
-
-            // 인덱스 업데이트
-            updateIndex(message)
-
-            // 메트릭 업데이트
-            updateMetrics(1, 0)
-
-            true
+            // 단일 메시지는 그대로 저장하되, 향후 배치 처리 개선 예정
+            val result = saveBatch(listOf(message))
+            result.successCount > 0
         } catch (e: Exception) {
+            logger.error("COLD 저장 중 예외 발생: messageId=${message.messageId}", e)
             updateMetrics(0, 1)
             false
         }
@@ -88,27 +85,78 @@ class ColdStorageService(
             messagesByDate.forEach { (date, dayMessages) ->
                 try {
                     val archivePath = getArchivePath(date)
-                    createDirectoryIfNotExists(archivePath.parent)
+                    createDirectoryIfNotExists(archivePath)
 
                     // 큐별로 다시 그룹화
                     val messagesByQueue = dayMessages.groupBy { "${it.tenantId}:${it.queueName}" }
 
                     messagesByQueue.forEach { (queueKey, queueMessages) ->
                         try {
-                            val archiveFile = archivePath.resolve("$queueKey$MESSAGE_FILE_EXTENSION")
-                            val messagesJson = objectMapper.writeValueAsString(queueMessages)
-                            writeCompressedFile(archiveFile, messagesJson)
+                            // 파일명에서 콜론을 언더스코어로 치환하여 파일 시스템 호환성 확보
+                            val safeQueueKey = queueKey.replace(":", "_")
+
+                            // 기존 파일이 있으면 append, 없으면 새로 생성
+                            val archiveFile = archivePath.resolve("$safeQueueKey$MESSAGE_FILE_EXTENSION")
+
+                            // 파일별 락을 사용하여 동시성 보호 (읽기/쓰기 모두 보호)
+                            val fileLock = fileLocks.computeIfAbsent(archiveFile.toString()) { ReentrantLock() }
+
+                            var actualNewMessageCount = 0
+                            try {
+                                fileLock.lock()
+                                
+                                val allMessages = if (Files.exists(archiveFile)) {
+                                    // 기존 파일에서 메시지 읽어와서 병합 (중복 방지)
+                                    try {
+                                        val existingMessages = readMessagesFromFile(archiveFile).toMutableList()
+                                        val existingMessageIds = existingMessages.map { it.messageId }.toSet()
+
+                                        // 중복되지 않는 새 메시지만 추가
+                                        val newUniqueMessages = queueMessages.filter { !existingMessageIds.contains(it.messageId) }
+                                        actualNewMessageCount = newUniqueMessages.size
+                                        
+                                        if (newUniqueMessages.isNotEmpty()) {
+                                            logger.info("COLD 기존 파일에 ${newUniqueMessages.size}개 메시지 추가 (기존: ${existingMessages.size}개, 중복 제외: ${queueMessages.size - newUniqueMessages.size}개) - $archiveFile")
+                                            existingMessages.addAll(newUniqueMessages)
+                                        } else {
+                                            logger.info("COLD 모든 메시지가 중복이라 스킵 - $archiveFile")
+                                        }
+
+                                        existingMessages
+                                    } catch (e: Exception) {
+                                        logger.warn("기존 파일 읽기 실패, 새로 생성: $archiveFile", e)
+                                        actualNewMessageCount = queueMessages.size
+                                        queueMessages
+                                    }
+                                } else {
+                                    logger.info("COLD 새 파일 생성: ${queueMessages.size}개 메시지 - $archiveFile")
+                                    actualNewMessageCount = queueMessages.size
+                                    queueMessages
+                                }
+
+                                // 실제로 저장할 메시지가 있는 경우에만 파일 쓰기
+                                if (allMessages.isNotEmpty() && actualNewMessageCount > 0) {
+                                    val messagesJson = objectMapper.writeValueAsString(allMessages)
+                                    writeCompressedFile(archiveFile, messagesJson)
+                                    logger.debug("COLD 파일 저장 완료: ${allMessages.size}개 메시지 (새로운: ${actualNewMessageCount}개) - $archiveFile")
+                                }
+                            } finally {
+                                fileLock.unlock()
+                            }
 
                             // 배치 인덱스 업데이트
                             updateBatchIndex(queueMessages)
 
-                            successful += queueMessages.size
+                            successful += actualNewMessageCount
+                            logger.info("큐 $queueKey COLD 저장 완료: ${actualNewMessageCount}개 메시지")
                         } catch (e: Exception) {
+                            logger.error("큐 $queueKey 처리 실패", e)
                             failed += queueMessages.size
                             errors.add("Failed to archive queue $queueKey for date $date: ${e.message}")
                         }
                     }
                 } catch (e: Exception) {
+                    logger.error("날짜 $date 처리 실패", e)
                     failed += dayMessages.size
                     errors.add("Failed to process date $date: ${e.message}")
                 }
@@ -116,11 +164,12 @@ class ColdStorageService(
 
             updateMetrics(successful, failed)
         } catch (e: Exception) {
+            logger.error("배치 저장 중 전체 실패", e)
             failed = messages.size
             errors.add("Batch save failed: ${e.message}")
         }
 
-        BatchResult(successful, failed, errors)
+        BatchResult(successCount = successful, failCount = failed, errors = errors)
     }
 
     override suspend fun getMessage(messageId: String): Message? = withContext(Dispatchers.IO) {
@@ -190,7 +239,7 @@ class ColdStorageService(
             }
         }
 
-        BatchResult(successful, failed, errors)
+        BatchResult(successCount = successful, failCount = failed, errors = errors)
     }
 
     override suspend fun getExpiredMessages(maxAge: Duration, limit: Int): List<Message> = withContext(Dispatchers.IO) {
@@ -292,6 +341,73 @@ class ColdStorageService(
             .filter { it.sentTimestamp.isAfter(startTime) && it.sentTimestamp.isBefore(endTime) }
     }
 
+    /**
+     * 큐의 모든 메시지 삭제 (디렉토리 전체 삭제)
+     */
+    suspend fun deleteQueueMessages(tenantId: String, queueName: String): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                val queueBasePath = Paths.get(basePath)
+                var deletedAny = false
+
+                // 모든 날짜 디렉토리에서 해당 큐 삭제 (콜론이 언더스코어로 치환된 경우도 포함)
+                Files.walk(queueBasePath)
+                    .filter { path ->
+                        val pathStr = path.toString()
+                        pathStr.contains("/$tenantId/$queueName") ||
+                                pathStr.contains("/$tenantId/${queueName}_partition_") ||
+                                pathStr.contains("/${tenantId}_$queueName") || // 콜론이 언더스코어로 치환된 경우
+                                pathStr.contains("/${tenantId}_${queueName}_partition_") || // 파티션도 포함
+                                path.fileName.toString().startsWith("${tenantId}_$queueName") || // 파일명도 확인
+                                path.fileName.toString().startsWith("${tenantId}:$queueName") // 기존 콜론 포함 경우
+                    }
+                    .sorted(Comparator.reverseOrder())
+                    .forEach { path ->
+                        if (Files.deleteIfExists(path)) {
+                            deletedAny = true
+                        }
+                    }
+
+                deletedAny
+            } catch (e: Exception) {
+                false
+            }
+        }
+    }
+
+    /**
+     * 손상된 파일들을 정리하는 메서드 (시작 시 호출)
+     */
+    @PostConstruct
+    private fun cleanupCorruptedFiles() {
+        try {
+            val basePath = Paths.get(this.basePath)
+            if (!Files.exists(basePath)) {
+                return
+            }
+
+            Files.walk(basePath)
+                .filter { Files.isRegularFile(it) && it.toString().endsWith(MESSAGE_FILE_EXTENSION) }
+                .forEach { file ->
+                    try {
+                        // 파일 검증 시도
+                        readCompressedFile(file)
+                    } catch (e: Exception) {
+                        logger.warn("손상된 파일 발견, 삭제: $file", e)
+                        try {
+                            Files.deleteIfExists(file)
+                        } catch (deleteException: Exception) {
+                            logger.error("손상된 파일 삭제 실패: $file", deleteException)
+                        }
+                    }
+                }
+
+            logger.info("손상된 파일 정리 완료")
+        } catch (e: Exception) {
+            logger.error("손상된 파일 정리 중 오류", e)
+        }
+    }
+
     private fun getMessagePath(message: Message): Path {
         val date = LocalDate.ofInstant(message.sentTimestamp, java.time.ZoneId.systemDefault())
         val dateStr = date.format(DATE_FORMATTER)
@@ -310,14 +426,76 @@ class ColdStorageService(
     }
 
     private fun writeCompressedFile(path: Path, content: String) {
-        GZIPOutputStream(FileOutputStream(path.toFile())).use { gzip ->
-            gzip.write(content.toByteArray())
+        writeCompressedFileAtomic(path, content)
+    }
+
+    /**
+     * 원자적 파일 쓰기: 임시 파일에 쓰고 성공 시 원본으로 이동
+     * 파일 손상을 방지하기 위한 핵심 메서드
+     */
+    private fun writeCompressedFileAtomic(path: Path, content: String) {
+        val tempFile = Paths.get("${path.toString()}.tmp")
+
+        try {
+            // 디렉토리 생성
+            createDirectoryIfNotExists(path.parent)
+
+            // 임시 파일에 압축하여 저장
+            GZIPOutputStream(FileOutputStream(tempFile.toFile())).use { gzip ->
+                gzip.write(content.toByteArray())
+                gzip.flush() // 모든 데이터가 쓰였는지 확인
+            }
+
+            // 임시 파일이 제대로 작성되었는지 검증
+            validateCompressedFile(tempFile)
+
+            // 원자적 이동 (rename)
+            Files.move(tempFile, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        } catch (e: Exception) {
+            // 실패 시 임시 파일 정리
+            try {
+                Files.deleteIfExists(tempFile)
+            } catch (cleanupException: Exception) {
+                logger.warn("임시 파일 정리 실패: ${tempFile}", cleanupException)
+            }
+
+            logger.error("원자적 파일 쓰기 실패: ${path}", e)
+            throw e
+        }
+    }
+
+    /**
+     * 압축 파일이 올바르게 작성되었는지 검증
+     */
+    private fun validateCompressedFile(path: Path) {
+        try {
+            GZIPInputStream(FileInputStream(path.toFile())).use { gzip ->
+                gzip.bufferedReader().readText()
+            }
+        } catch (e: Exception) {
+            throw IllegalStateException("압축 파일 검증 실패: ${path}", e)
         }
     }
 
     private fun readCompressedFile(path: Path): String {
-        return GZIPInputStream(FileInputStream(path.toFile())).use { gzip ->
-            gzip.bufferedReader().readText()
+        return try {
+            GZIPInputStream(FileInputStream(path.toFile())).use { gzip ->
+                gzip.bufferedReader().readText()
+            }
+        } catch (e: java.util.zip.ZipException) {
+            logger.error("압축 파일 손상 감지: ${path} - ${e.message}")
+            // 손상된 파일을 백업으로 이동
+            val corruptedPath = Paths.get("${path.toString()}.corrupted.${System.currentTimeMillis()}")
+            try {
+                Files.move(path, corruptedPath)
+                logger.warn("손상된 파일을 백업으로 이동: ${path} -> ${corruptedPath}")
+            } catch (moveException: Exception) {
+                logger.error("손상된 파일 이동 실패", moveException)
+            }
+            throw e
+        } catch (e: Exception) {
+            logger.error("압축 파일 읽기 실패: ${path}", e)
+            throw e
         }
     }
 
@@ -334,33 +512,79 @@ class ColdStorageService(
     private fun readMessagesFromFile(path: Path): List<Message> {
         return try {
             val content = readCompressedFile(path)
-            objectMapper.readValue(content, objectMapper.typeFactory.constructCollectionType(List::class.java, Message::class.java))
+            if (content.isBlank()) {
+                logger.warn("빈 파일 발견: $path")
+                return emptyList()
+            }
+            
+            try {
+                // 먼저 배열로 파싱 시도 (일반적인 경우)
+                val messages: List<Message> = objectMapper.readValue(
+                    content, 
+                    objectMapper.typeFactory.constructCollectionType(List::class.java, Message::class.java)
+                )
+                logger.debug("파일에서 ${messages.size}개 메시지 읽기 성공: $path")
+                messages
+            } catch (e: Exception) {
+                try {
+                    // 단일 메시지로 파싱 시도 (레거시 호환성)
+                    val message = objectMapper.readValue(content, Message::class.java)
+                    logger.debug("파일에서 단일 메시지 읽기 성공: $path")
+                    listOf(message)
+                } catch (e2: Exception) {
+                    logger.error("파일 파싱 실패: $path - 배열 파싱 오류: ${e.message}, 단일 메시지 파싱 오류: ${e2.message}")
+                    emptyList()
+                }
+            }
         } catch (e: Exception) {
+            logger.error("압축 파일 읽기 실패: $path - ${e.message}")
             emptyList()
         }
     }
 
     private fun getQueueMessages(queueName: String, maxCount: Int): List<Message> {
         val messages = mutableListOf<Message>()
+        val queueNameWithoutPartition = queueName.split("_partition_")[0]
+        val seenMessageIds = mutableSetOf<String>() // 중복 메시지 방지
 
         try {
             Files.walk(Paths.get(basePath))
                 .filter { Files.isRegularFile(it) && it.toString().endsWith(MESSAGE_FILE_EXTENSION) }
-                .filter { it.toString().contains(queueName) }
+                .filter { path ->
+                    // 경로나 파일명에서 큐 이름이 포함되어 있는지 확인 (콜론이 언더스코어로 치환된 경우도 포함)
+                    val pathStr = path.toString()
+                    val fileName = path.fileName.toString()
+                    pathStr.contains("/$queueNameWithoutPartition/") ||
+                            pathStr.contains("/${queueNameWithoutPartition}_partition_") ||
+                            pathStr.contains("$queueNameWithoutPartition-batch-") ||
+                            fileName.startsWith("tenant-1_$queueNameWithoutPartition") || // 콜론이 언더스코어로 치환된 경우
+                            fileName.startsWith("tenant-1:$queueNameWithoutPartition") // 기존 콜론 포함 경우
+                }
                 .forEach { file ->
+                    if (messages.size >= maxCount) return@forEach
+
                     try {
                         val fileMessages = readMessagesFromFile(file)
+
                         fileMessages.forEach { message ->
-                            if (messages.size < maxCount && message.queueName == queueName) {
+                            // 중복 메시지 체크 및 큐 이름 매칭
+                            if (messages.size < maxCount &&
+                                !seenMessageIds.contains(message.messageId) &&
+                                (message.queueName == queueName ||
+                                        message.queueName.startsWith("${queueNameWithoutPartition}_partition_") ||
+                                        message.queueName == queueNameWithoutPartition)
+                            ) {
                                 messages.add(message)
+                                seenMessageIds.add(message.messageId)
                             }
                         }
                     } catch (e: Exception) {
-                        // 개별 파일 오류는 무시
+                        // 개별 파일 오류는 무시 (로그는 debug 레벨로)
+                        logger.warn("파일 읽기 실패: $file - ${e.message}")
                     }
                 }
         } catch (e: Exception) {
-            // 전체 오류 처리
+            logger.error("콜드 스토리지 접근 오류: ${e.message}", e)
         }
 
         return messages.sortedBy { it.sentTimestamp }
@@ -385,16 +609,22 @@ class ColdStorageService(
 
     private fun getMessageCount(): Long {
         return try {
+            val seenMessageIds = mutableSetOf<String>() // 중복 메시지 방지
+
             Files.walk(Paths.get(basePath))
                 .filter { Files.isRegularFile(it) && it.toString().endsWith(MESSAGE_FILE_EXTENSION) }
-                .mapToLong { file ->
+                .forEach { file ->
                     try {
-                        readMessagesFromFile(file).size.toLong()
+                        val fileMessages = readMessagesFromFile(file)
+                        fileMessages.forEach { message ->
+                            seenMessageIds.add(message.messageId)
+                        }
                     } catch (e: Exception) {
-                        0L
+                        // 개별 파일 오류는 무시
                     }
                 }
-                .sum()
+
+            seenMessageIds.size.toLong()
         } catch (e: Exception) {
             0L
         }
@@ -427,4 +657,6 @@ class ColdStorageService(
             lastUpdated = Instant.now()
         )
     }
+
+    // ...existing code...
 }

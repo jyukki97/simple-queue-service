@@ -56,7 +56,7 @@ interface StandardTieringPolicy : TieringPolicy {
     companion object {
         // Standard 전용 설정값들 (좀 더 관대한 설정)
         const val HOT_MAX_COUNT = 100L
-        const val WARM_MAX_COUNT = 1000L
+        const val WARM_MAX_COUNT = 100L
         const val HOT_TIME_THRESHOLD_HOURS = 2L
         const val WARM_TIME_THRESHOLD_HOURS = 48L
     }

@@ -15,7 +15,7 @@ data class TierStats(
     /**
      * 개수 기반 초과 여부 확인
      */
-    fun isCountExceeded(threshold: Long): Boolean = messageCount > threshold
+    fun isCountExceeded(threshold: Long): Boolean = messageCount >= threshold
 
     /**
      * 시간 기반 초과 여부 확인

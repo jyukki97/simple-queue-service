@@ -107,7 +107,6 @@ class RocksDBWarmStorageService(
                 rocksDB.delete(ttlKey.toByteArray())
                 ttlIndex.remove(messageId)
 
-                logger.debug("RocksDB에서 메시지 삭제 완료: $messageId")
                 true
             } catch (e: Exception) {
                 logger.error("RocksDB 메시지 삭제 실패: $messageId", e)
@@ -150,9 +149,6 @@ class RocksDBWarmStorageService(
                 // 배치 실행
                 rocksDB.write(org.rocksdb.WriteOptions(), writeBatch)
                 writeBatch.close()
-
-                logger.info("RocksDB 배치 저장 완료 - 성공: $successCount, 실패: $failureCount")
-
             } catch (e: Exception) {
                 logger.error("RocksDB 배치 저장 실패", e)
                 errors.add("배치 저장 실패: ${e.message}")
@@ -196,29 +192,32 @@ class RocksDBWarmStorageService(
     fun getMessagesByQueue(tenantId: String, queueName: String, limit: Int = 100, offset: Int = 0): Flux<Message> {
         return Mono.fromCallable {
             val messages = mutableListOf<Message>()
-            
+
             try {
                 // RocksDB 이터레이터 사용
                 val iterator = rocksDB.newIterator()
                 iterator.seekToFirst()
-                
+
                 var matchedCount = 0
-                
+
                 while (iterator.isValid() && messages.size < limit) {
                     val key = String(iterator.key())
-                    
+
                     // 메시지 키만 처리 (TTL 키는 제외)
                     if (key.startsWith(MESSAGE_PREFIX)) {
                         try {
                             val messageId = key.removePrefix(MESSAGE_PREFIX)
-                            
+
                             // TTL 확인
                             if (!isExpired(messageId)) {
                                 val messageJson = String(iterator.value())
                                 val message = objectMapper.readValue(messageJson, Message::class.java)
-                                
-                                // 큐 필터링
-                                if (message.tenantId == tenantId && message.queueName == queueName) {
+
+                                // 큐 필터링 - 정확한 큐 이름 또는 파티션된 큐 이름 매칭
+                                if (message.tenantId == tenantId &&
+                                    (message.queueName == queueName ||
+                                            message.queueName.startsWith("${queueName}_partition_"))
+                                ) {
                                     // 오프셋 처리
                                     if (matchedCount >= offset) {
                                         messages.add(message)
@@ -230,20 +229,20 @@ class RocksDBWarmStorageService(
                             logger.error("메시지 파싱 실패: $key", e)
                         }
                     }
-                    
+
                     iterator.next()
                 }
-                
+
                 iterator.close()
-                
+
             } catch (e: Exception) {
                 logger.error("큐별 메시지 조회 실패: $tenantId:$queueName", e)
             }
-            
+
             messages
         }
-        .flatMapMany { Flux.fromIterable(it) }
-        .subscribeOn(Schedulers.boundedElastic())
+            .flatMapMany { Flux.fromIterable(it) }
+            .subscribeOn(Schedulers.boundedElastic())
     }
 
     /**
@@ -257,15 +256,15 @@ class RocksDBWarmStorageService(
                 var totalMessages = 0
                 var expiredMessages = 0
                 val now = Instant.now().epochSecond
-                
+
                 iterator.seekToFirst()
                 while (iterator.isValid()) {
                     val key = String(iterator.key())
-                    
+
                     if (key.startsWith(MESSAGE_PREFIX)) {
                         totalMessages++
                         val messageId = key.substring(MESSAGE_PREFIX.length)
-                        
+
                         // TTL 확인
                         val ttlKey = TTL_PREFIX + messageId
                         val ttlBytes = rocksDB.get(ttlKey.toByteArray())
@@ -279,7 +278,7 @@ class RocksDBWarmStorageService(
                     iterator.next()
                 }
                 iterator.close()
-                
+
                 val activeMessages = totalMessages - expiredMessages
                 val estimatedSizeBytes = totalMessages * 1024L
 
@@ -313,7 +312,7 @@ class RocksDBWarmStorageService(
                 val iterator = rocksDB.newIterator()
                 var messageCount = 0
                 var ttlCount = 0
-                
+
                 iterator.seekToFirst()
                 while (iterator.isValid()) {
                     val key = String(iterator.key())
@@ -324,7 +323,7 @@ class RocksDBWarmStorageService(
                     iterator.next()
                 }
                 iterator.close()
-                
+
                 mapOf(
                     "actualMessageKeys" to messageCount,
                     "actualTtlKeys" to ttlCount,
@@ -343,44 +342,112 @@ class RocksDBWarmStorageService(
     fun debugAllMessages(): Mono<List<Map<String, Any>>> {
         return Mono.fromCallable {
             val messageInfos = mutableListOf<Map<String, Any>>()
-            
+
             try {
                 val iterator = rocksDB.newIterator()
                 iterator.seekToFirst()
-                
+
                 while (iterator.isValid()) {
                     val key = String(iterator.key())
-                    
+
                     if (key.startsWith(MESSAGE_PREFIX)) {
                         try {
                             val messageId = key.removePrefix(MESSAGE_PREFIX)
                             val messageJson = String(iterator.value())
                             val message = objectMapper.readValue(messageJson, Message::class.java)
-                            
-                            messageInfos.add(mapOf(
-                                "messageId" to messageId,
-                                "tenantId" to message.tenantId,
-                                "queueName" to message.queueName,
-                                "isExpired" to isExpired(messageId),
-                                "messageBodyStart" to message.messageBody.take(50)
-                            ))
+
+                            messageInfos.add(
+                                mapOf(
+                                    "messageId" to messageId,
+                                    "tenantId" to message.tenantId,
+                                    "queueName" to message.queueName,
+                                    "isExpired" to isExpired(messageId),
+                                    "messageBodyStart" to message.messageBody.take(50)
+                                )
+                            )
                         } catch (e: Exception) {
-                            messageInfos.add(mapOf(
-                                "messageId" to key.removePrefix(MESSAGE_PREFIX),
-                                "error" to "파싱 실패: ${e.message}"
-                            ))
+                            messageInfos.add(
+                                mapOf(
+                                    "messageId" to key.removePrefix(MESSAGE_PREFIX),
+                                    "error" to "파싱 실패: ${e.message}"
+                                )
+                            )
                         }
                     }
-                    
+
                     iterator.next()
                 }
-                
+
                 iterator.close()
-                
+
             } catch (e: Exception) {
                 logger.error("디버그 모든 메시지 조회 실패", e)
             }
-            
+
+            messageInfos.toList()
+        }.subscribeOn(Schedulers.boundedElastic())
+    }
+
+    /**
+     * 디버그: 처음 몇 개 메시지의 큐 이름 확인
+     */
+    fun debugFirstFewMessages(count: Int = 5): Mono<List<Map<String, String>>> {
+        return Mono.fromCallable {
+            val messageInfos = mutableListOf<Map<String, String>>()
+
+            try {
+                logger.info("RocksDB 디버그 시작: 처음 ${count}개 메시지 조회")
+                val iterator = rocksDB.newIterator()
+                iterator.seekToFirst()
+
+                var processedCount = 0
+                while (iterator.isValid() && messageInfos.size < count && processedCount < 100) {
+                    val key = String(iterator.key())
+                    processedCount++
+
+                    if (key.startsWith(MESSAGE_PREFIX)) {
+                        try {
+                            val messageJson = String(iterator.value())
+                            val message = objectMapper.readValue(messageJson, Message::class.java)
+
+                            messageInfos.add(
+                                mapOf(
+                                    "messageId" to message.messageId,
+                                    "queueName" to message.queueName,
+                                    "tenantId" to message.tenantId,
+                                    "messageBody" to message.messageBody.take(50),
+                                    "keyInDB" to key
+                                )
+                            )
+                            logger.info("메시지 발견: ${message.messageId}, 큐: ${message.queueName}")
+                        } catch (e: Exception) {
+                            logger.warn("메시지 파싱 실패: $key", e)
+                            messageInfos.add(
+                                mapOf(
+                                    "error" to "파싱 실패",
+                                    "key" to key,
+                                    "errorMessage" to (e.message ?: "알 수 없는 오류")
+                                )
+                            )
+                        }
+                    }
+
+                    iterator.next()
+                }
+
+                iterator.close()
+                logger.info("RocksDB 디버그 완료: ${messageInfos.size}개 메시지 조회됨")
+
+            } catch (e: Exception) {
+                logger.error("디버그 메시지 조회 실패", e)
+                messageInfos.add(
+                    mapOf(
+                        "fatalError" to "RocksDB 접근 실패",
+                        "errorMessage" to (e.message ?: "알 수 없는 오류")
+                    )
+                )
+            }
+
             messageInfos.toList()
         }.subscribeOn(Schedulers.boundedElastic())
     }
@@ -390,6 +457,69 @@ class RocksDBWarmStorageService(
      */
     private fun getAllMessageIds(): List<String> {
         return ttlIndex.keys.toList()
+    }
+
+    /**
+     * 큐별 모든 메시지 삭제
+     */
+    fun deleteQueueMessages(tenantId: String, queueName: String): Mono<Int> {
+        return Mono.fromCallable {
+            var deletedCount = 0
+
+            try {
+                // 큐에 속한 모든 메시지 찾기
+                val iterator = rocksDB.newIterator()
+                iterator.seekToFirst()
+
+                val keysToDelete = mutableListOf<String>()
+
+                while (iterator.isValid) {
+                    val key = String(iterator.key())
+
+                    if (key.startsWith(MESSAGE_PREFIX)) {
+                        try {
+                            val messageJson = String(iterator.value())
+                            val message = objectMapper.readValue(messageJson, Message::class.java)
+
+                            // 같은 테넌트이고 큐 이름이 일치하는지 확인 (파티셔닝 고려)
+                            if (message.tenantId == tenantId &&
+                                (message.queueName == queueName ||
+                                        message.queueName.startsWith("${queueName}_partition_"))
+                            ) {
+
+                                keysToDelete.add(key)
+
+                                // TTL 인덱스에서도 제거
+                                val messageId = key.removePrefix(MESSAGE_PREFIX)
+                                ttlIndex.remove(messageId)
+
+                                deletedCount++
+                            }
+                        } catch (e: Exception) {
+                            logger.warn("메시지 파싱 실패: $key", e)
+                        }
+                    }
+
+                    iterator.next()
+                }
+
+                iterator.close()
+
+                // 실제 키 삭제
+                keysToDelete.forEach { key ->
+                    rocksDB.delete(key.toByteArray())
+                }
+
+                if (deletedCount > 0) {
+                    logger.info("WARM 계층에서 큐 ${tenantId}:${queueName} 메시지 ${deletedCount}개 삭제 완료")
+                }
+
+            } catch (e: Exception) {
+                logger.error("큐 메시지 삭제 실패: ${tenantId}:${queueName}", e)
+            }
+
+            deletedCount
+        }.subscribeOn(Schedulers.boundedElastic())
     }
 }
 

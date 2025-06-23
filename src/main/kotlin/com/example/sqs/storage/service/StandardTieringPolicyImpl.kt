@@ -13,6 +13,7 @@ import java.time.Instant
 @Service
 class StandardTieringPolicyImpl(
     private val redisTemplate: ReactiveRedisTemplate<String, String>,
+    private val warmTierManagerService: WarmTierManagerService,
     @Value("\${queue.partition-count:4}") private val partitionCount: Int
 ) : StandardTieringPolicy {
 
@@ -22,26 +23,12 @@ class StandardTieringPolicyImpl(
         val countExceeded = stats.isCountExceeded(getHotMaxCount())
         val timeExceeded = stats.isTimeExceeded(getHotTimeThresholdHours())
 
-        if (countExceeded) {
-            logger.debug("Standard Hot 개수 초과: ${stats.messageCount} > ${getHotMaxCount()}")
-        }
-        if (timeExceeded) {
-            logger.debug("Standard Hot 시간 초과: 가장 오래된 메시지 ${stats.oldestMessageTime}")
-        }
-
         return countExceeded || timeExceeded
     }
 
     override fun shouldMoveWarmToCold(stats: TierStats): Boolean {
         val countExceeded = stats.isCountExceeded(getWarmMaxCount())
         val timeExceeded = stats.isTimeExceeded(getWarmTimeThresholdHours())
-
-        if (countExceeded) {
-            logger.debug("Standard Warm 개수 초과: ${stats.messageCount} > ${getWarmMaxCount()}")
-        }
-        if (timeExceeded) {
-            logger.debug("Standard Warm 시간 초과: 가장 오래된 메시지 ${stats.oldestMessageTime}")
-        }
 
         return countExceeded || timeExceeded
     }
@@ -56,7 +43,7 @@ class StandardTieringPolicyImpl(
 
             Flux.range(0, partitionCount)
                 .flatMap { partitionNumber ->
-                    val hotKey = "hot:queue:${queue.tenantId}:${queue.queueName}-partition-${partitionNumber}"
+                    val hotKey = "hot:queue:${queue.tenantId}:${queue.queueName}_partition_${partitionNumber}"
                     getOldestMessages(hotKey, moveCountPerPartition)
                 }
         } else {
@@ -65,7 +52,7 @@ class StandardTieringPolicyImpl(
 
             Flux.range(0, partitionCount)
                 .flatMap { partitionNumber ->
-                    val hotKey = "hot:queue:${queue.tenantId}:${queue.queueName}-partition-${partitionNumber}"
+                    val hotKey = "hot:queue:${queue.tenantId}:${queue.queueName}_partition_${partitionNumber}"
                     getExpiredMessages(hotKey, getHotTimeThresholdHours())
                 }
         }
@@ -73,38 +60,27 @@ class StandardTieringPolicyImpl(
 
     override fun getMessagesToMoveWarmToCold(queue: Queue, stats: TierStats): Flux<String> {
         return if (stats.isCountExceeded(getWarmMaxCount())) {
-            // 개수 초과: 모든 파티션에서 오래된 메시지들을 이관
+            // 개수 초과: RocksDB에서 오래된 메시지들을 이관
             val totalMoveCount = stats.messageCount - getWarmMaxCount()
-            val baseCountPerPartition = totalMoveCount / partitionCount
-            val remainder = totalMoveCount % partitionCount
 
-            logger.info("Standard Warm→Cold 이관: 총 ${totalMoveCount}개 메시지, 기본 파티션당 ${baseCountPerPartition}개, 나머지 ${remainder}개")
+            logger.info("Standard Warm→Cold 이관: 총 ${totalMoveCount}개 메시지 이동 필요")
 
-            Flux.range(0, partitionCount)
-                .flatMap { partitionNumber ->
-                    val warmKey = "warm:queue:${queue.tenantId}:${queue.queueName}-partition-${partitionNumber}"
-
-                    // 나머지 분배: 처음 remainder개 파티션에서 1개씩 더 이동
-                    val moveCountForThisPartition = if (partitionNumber < remainder) {
-                        baseCountPerPartition + 1
-                    } else {
-                        baseCountPerPartition
-                    }
-
-                    if (moveCountForThisPartition > 0) {
-                        getOldestMessages(warmKey, moveCountForThisPartition)
-                    } else {
-                        Flux.empty()
-                    }
-                }
+            // RocksDB에서 큐별 메시지를 조회하여 오래된 순으로 정렬 후 이동할 메시지 선택
+            warmTierManagerService.getWarmMessagesByQueue(queue.tenantId, queue.queueName, Int.MAX_VALUE, 0)
+                .sort { m1, m2 -> m1.sentTimestamp.compareTo(m2.sentTimestamp) } // 오래된 순으로 정렬
+                .take(totalMoveCount)
+                .map { it.messageId }
         } else {
-            // 시간 초과: 모든 파티션에서 만료된 메시지들을 이관
+            // 시간 초과: RocksDB에서 만료된 메시지들을 이관
             logger.info("Standard Warm→Cold 시간 초과 이관")
 
-            Flux.range(0, partitionCount)
-                .flatMap { partitionNumber ->
-                    val warmKey = "warm:queue:${queue.tenantId}:${queue.queueName}-partition-${partitionNumber}"
-                    getExpiredMessages(warmKey, getWarmTimeThresholdHours())
+            val thresholdTime = java.time.Instant.now().minusSeconds(getWarmTimeThresholdHours() * 3600)
+
+            warmTierManagerService.getWarmMessagesByQueue(queue.tenantId, queue.queueName, Int.MAX_VALUE, 0)
+                .filter { it.sentTimestamp.isBefore(thresholdTime) }
+                .map { it.messageId }
+                .doOnNext { messageId ->
+                    logger.debug("WARM→COLD 만료 이동 대상 메시지: $messageId")
                 }
         }
     }
@@ -117,14 +93,19 @@ class StandardTieringPolicyImpl(
             return Flux.empty()
         }
 
+        logger.debug("Redis 키에서 메시지 조회: queueKey=$queueKey, count=$count")
+
         return redisTemplate.opsForList()
             .size(queueKey)
+            .doOnNext { size -> logger.debug("Redis 리스트 크기: $size (키: $queueKey)") }
             .flatMapMany { actualSize ->
                 val safeCount = minOf(count, actualSize)
+                logger.debug("실제 조회할 메시지 수: $safeCount")
                 if (safeCount > 0) {
                     redisTemplate.opsForList()
                         .range(queueKey, 0, safeCount - 1)
                 } else {
+                    logger.debug("조회할 메시지가 없음")
                     Flux.empty()
                 }
             }

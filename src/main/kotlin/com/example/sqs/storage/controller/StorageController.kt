@@ -4,6 +4,7 @@ import com.example.sqs.auth.domain.AuthContext
 import com.example.sqs.queue.service.QueueService
 import com.example.sqs.storage.dto.*
 import com.example.sqs.storage.service.StorageStatsService
+import com.example.sqs.storage.scheduler.TieringScheduler
 import org.springframework.web.bind.annotation.*
 import reactor.core.publisher.Mono
 
@@ -11,7 +12,8 @@ import reactor.core.publisher.Mono
 @RequestMapping("/api/v1/storage")
 class StorageController(
     private val storageStatsService: StorageStatsService,
-    private val queueService: QueueService
+    private val queueService: QueueService,
+    private val tieringScheduler: TieringScheduler
 ) {
 
     /**
@@ -195,5 +197,18 @@ class StorageController(
                     )
                 }
             }
+    }
+
+    /**
+     * 계층화 정책 수동 실행 (테스트/디버깅용)
+     */
+    @PostMapping("/trigger-tiering")
+    fun triggerTieringPolicy(): Mono<Map<String, Any>> {
+        return try {
+            tieringScheduler.executeTieringPolicy()
+            Mono.just(mapOf("success" to true, "message" to "계층화 정책이 실행되었습니다."))
+        } catch (e: Exception) {
+            Mono.just(mapOf("success" to false, "error" to "계층화 정책 실행 실패: ${e.message}"))
+        }
     }
 }

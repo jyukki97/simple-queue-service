@@ -3,8 +3,9 @@ package com.example.sqs.storage.service
 import com.example.sqs.message.domain.Message
 import com.example.sqs.storage.domain.StorageTier
 import com.example.sqs.storage.domain.BatchResult
-import com.example.sqs.storage.domain.StorageUsageInfo
+import com.example.sqs.storage.service.StorageUsageInfo
 import com.example.sqs.storage.service.impl.*
+import com.example.sqs.performance.partitioning.QueuePartitioningService
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
@@ -25,6 +26,12 @@ class StorageServiceTest {
     
     @Mock
     private lateinit var objectMapper: ObjectMapper
+    
+    @Mock
+    private lateinit var partitioningService: QueuePartitioningService
+    
+    @Mock
+    private lateinit var warmTierManagerService: WarmTierManagerService
     
     @Test
     fun `핫 스토리지 서비스 생성 테스트`() {
@@ -69,9 +76,10 @@ class StorageServiceTest {
         val hotStorage = HotStorageService(redisTemplate, objectMapper)
         val warmStorage = WarmStorageService(redisTemplate, objectMapper)
         val coldStorage = ColdStorageService(objectMapper, "/tmp/test-cold-storage")
-        val tieringManager = TieringManagerService(
-            hotStorage, warmStorage, coldStorage, redisTemplate, objectMapper, 4
+        val storageStatsService = StorageStatsService(
+            redisTemplate, partitioningService, objectMapper, warmTierManagerService, coldStorage
         )
+        val tieringManager = TieringManagerService(storageStatsService)
         
         val unifiedStorage = UnifiedStorageService(
             hotStorage, warmStorage, coldStorage, tieringManager
@@ -83,13 +91,13 @@ class StorageServiceTest {
     @Test
     fun `배치 결과 생성 테스트`() {
         val result = BatchResult(
-            successful = 5,
-            failed = 2,
+            successCount = 5,
+            failCount = 2,
             errors = listOf("Error 1", "Error 2")
         )
         
-        assertEquals(5, result.successful)
-        assertEquals(2, result.failed)
+        assertEquals(5, result.successCount)
+        assertEquals(2, result.failCount)
         assertEquals(2, result.errors.size)
     }
     

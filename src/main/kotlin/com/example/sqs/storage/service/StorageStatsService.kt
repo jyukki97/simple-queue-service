@@ -10,9 +10,8 @@ import com.example.sqs.storage.domain.TierStats
 import com.example.sqs.storage.dto.PromoteResult
 import com.example.sqs.storage.dto.TierMessageInfo
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.reactor.mono
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.context.ApplicationContext
 import org.springframework.context.annotation.Lazy
 import org.springframework.data.redis.core.ReactiveRedisTemplate
 import org.springframework.stereotype.Service
@@ -42,14 +41,19 @@ class StorageStatsService(
      * Warm Storage 통계 정보 조회 (RocksDB 사용)
      */
     fun getWarmStats(queue: Queue): Mono<TierStats> {
-        return warmTierManagerService.getWarmStats()
-            .map { warmStats ->
+        // 큐별 WARM 메시지 개수 조회
+        return warmTierManagerService.getWarmMessagesByQueue(queue.tenantId, queue.queueName, Int.MAX_VALUE, 0)
+            .collectList()
+            .map { messages ->
+                val messageCount = messages.size.toLong()
+                val totalSizeBytes = messages.sumOf { it.messageBody.length.toLong() }
+
                 TierStats(
                     tier = "WARM",
-                    messageCount = warmStats.totalMessages.toLong(),
-                    oldestMessageTime = null, // WarmStorageStats에는 이 정보가 없음
-                    newestMessageTime = null, // WarmStorageStats에는 이 정보가 없음
-                    totalSizeBytes = warmStats.estimatedSizeBytes
+                    messageCount = messageCount,
+                    oldestMessageTime = messages.minByOrNull { it.sentTimestamp }?.sentTimestamp,
+                    newestMessageTime = messages.maxByOrNull { it.sentTimestamp }?.sentTimestamp,
+                    totalSizeBytes = totalSizeBytes
                 )
             }
             .onErrorReturn(
@@ -64,10 +68,35 @@ class StorageStatsService(
     }
 
     /**
-     * Cold Storage 통계 정보 조회 (모든 큐 타입에서 파티션 사용)
+     * Cold Storage 통계 정보 조회 (파일 시스템 기반)
      */
     fun getColdStats(queue: Queue): Mono<TierStats> {
-        return getPartitionedTierStats(queue, "COLD")
+        return mono {
+            // ColdStorageService에서 직접 메시지 조회
+            val messages = coldStorageService.getMessages(queue.queueName, Int.MAX_VALUE)
+
+            val messageCount = messages.size.toLong()
+            val totalSizeBytes = messages.sumOf { it.messageBody.length.toLong() }
+            val oldestMessageTime = messages.minByOrNull { it.sentTimestamp }?.sentTimestamp
+            val newestMessageTime = messages.maxByOrNull { it.sentTimestamp }?.sentTimestamp
+
+            TierStats(
+                tier = "COLD",
+                messageCount = messageCount,
+                oldestMessageTime = oldestMessageTime,
+                newestMessageTime = newestMessageTime,
+                totalSizeBytes = totalSizeBytes
+            )
+        }
+            .onErrorReturn(
+                TierStats(
+                    tier = "COLD",
+                    messageCount = 0,
+                    oldestMessageTime = null,
+                    newestMessageTime = null,
+                    totalSizeBytes = 0
+                )
+            )
     }
 
     /**
@@ -81,13 +110,46 @@ class StorageStatsService(
      * 파티션된 큐에서 메시지 이관 (FIFO와 Standard 모두 지원)
      */
     private fun moveMessageInPartitionedQueue(messageId: String, fromTier: String, toTier: String, queue: Queue): Mono<Void> {
-        return if (queue.attributes.fifoQueue) {
+        return if (fromTier == "WARM" && toTier == "COLD") {
+            // WARM→COLD 이동: RocksDB에서 직접 처리
+            moveWarmToCold(messageId, queue)
+        } else if (queue.attributes.fifoQueue) {
             // FIFO 큐인 경우: MessageGroupId 기반으로 정확한 파티션 계산
             moveMessageInFifoQueue(messageId, fromTier, toTier, queue)
         } else {
             // Standard 큐인 경우: 모든 파티션 검색
             moveMessageInStandardQueue(messageId, fromTier, toTier, queue)
         }
+    }
+
+    /**
+     * WARM→COLD 메시지 이동 (RocksDB → 파일시스템)
+     */
+    private fun moveWarmToCold(messageId: String, queue: Queue): Mono<Void> {
+        return warmTierManagerService.getMessageFromWarm(messageId)
+            .cast(Message::class.java)
+            .flatMap { message ->
+                // COLD 저장소에 저장 - mono {} 블록 사용으로 runBlocking 완전 제거
+                mono {
+                    coldStorageService.saveMessage(message)
+                }
+                    .onErrorResume { error ->
+                        logger.error("COLD 저장 중 예외 발생: $messageId", error)
+                        Mono.error(RuntimeException("Failed to save message to COLD storage: $messageId", error))
+                    }
+                    .flatMap { success ->
+                        if (success) {
+                            warmTierManagerService.deleteMessageFromWarm(messageId)
+                                .then(updateMessageTier(messageId, "COLD"))
+                        } else {
+                            logger.error("COLD 저장 실패 (false 반환): messageId=$messageId")
+                            Mono.error(RuntimeException("Failed to save message to COLD storage: $messageId"))
+                        }
+                    }
+            }
+            .doOnError { error ->
+                logger.error("메시지 WARM→COLD 이동 실패: $messageId", error)
+            }
     }
 
     /**
@@ -104,12 +166,12 @@ class StorageStatsService(
                     // MessageGroupId 기반으로 파티션 계산
                     val partitionNumber = partitioningService.getPartitionNumber(messageGroupId, 4)
                     val partitionedQueueName = partitioningService.getPartitionedQueueName(queue.queueName, partitionNumber)
-                    
+
                     val tierPrefix = fromTier.lowercase()
                     val fromKey = "${tierPrefix}:queue:${queue.tenantId}:${partitionedQueueName}"
                     val toTierPrefix = toTier.lowercase()
                     val toKey = "${toTierPrefix}:queue:${queue.tenantId}:${partitionedQueueName}"
-                    
+
                     moveMessageBetweenKeys(messageId, fromKey, toKey, toTier)
                 }
             }
@@ -161,34 +223,33 @@ class StorageStatsService(
                     // HOT에서 COLD로 이동: Redis에서 메시지 조회
                     getMessageDetails(messageId)
                 }
-                
+
                 messageSource
                     .flatMap { message ->
-                        // ColdStorageService를 사용하여 파일 시스템에 저장
-                        Mono.fromCallable {
-                            kotlinx.coroutines.runBlocking {
-                                coldStorageService.saveMessage(message)
-                            }
+                        // ColdStorageService를 사용하여 파일 시스템에 저장 - mono {} 사용
+                        mono {
+                            coldStorageService.saveMessage(message)
                         }
-                        .flatMap { success ->
-                            if (success) {
-                                // COLD 저장 성공 시, 기존 위치에서 메시지 제거
-                                if (fromKey.contains("warm:")) {
-                                    // WARM에서 제거: RocksDB에서 삭제
-                                    warmTierManagerService.deleteMessageFromWarm(messageId)
-                                        .then(updateMessageTier(messageId, toTier))
+                            .flatMap { success ->
+                                if (success) {
+                                    // COLD 저장 성공 시, 기존 위치에서 메시지 제거
+                                    if (fromKey.contains("warm:")) {
+                                        // WARM에서 제거: RocksDB에서 삭제
+                                        warmTierManagerService.deleteMessageFromWarm(messageId)
+                                            .then(updateMessageTier(messageId, toTier))
+                                    } else {
+                                        // HOT에서 제거: Redis에서 삭제
+                                        redisTemplate.opsForList()
+                                            .remove(fromKey, 1, messageId)
+                                            .then(updateMessageTier(messageId, toTier))
+                                    }
                                 } else {
-                                    // HOT에서 제거: Redis에서 삭제
-                                    redisTemplate.opsForList()
-                                        .remove(fromKey, 1, messageId)
-                                        .then(updateMessageTier(messageId, toTier))
+                                    Mono.error(RuntimeException("Failed to save message to COLD storage: $messageId"))
                                 }
-                            } else {
-                                Mono.error(RuntimeException("Failed to save message to COLD storage: $messageId"))
                             }
-                        }
                     }
             }
+
             else -> {
                 // HOT/WARM 티어 간 이동: 기존 Redis 기반 로직 사용
                 redisTemplate.opsForList()
@@ -202,9 +263,9 @@ class StorageStatsService(
                     .then(updateMessageTier(messageId, toTier))
             }
         }
-        .doOnSuccess {
-            logger.debug("메시지 이관 완료: messageId=$messageId, $fromKey → $toKey ($toTier)")
-        }
+            .doOnSuccess {
+                logger.debug("메시지 이관 완료: messageId=$messageId, $fromKey → $toKey ($toTier)")
+            }
     }
 
     /**
@@ -420,27 +481,25 @@ class StorageStatsService(
      * COLD 계층 메시지 조회 (파일 시스템)
      */
     private fun getColdTierMessages(queue: Queue, maxMessages: Int, offset: Int): Mono<List<TierMessageInfo>> {
-        val partitionCount = 4 // 설정에서 가져와야 함
-        val tierPrefix = "cold:queue"
+        return mono {
+            // ColdStorageService에서 직접 메시지 조회
+            val messages = coldStorageService.getMessages(queue.queueName, maxMessages + offset)
 
-        return Flux.range(0, partitionCount)
-            .flatMap { partitionNumber ->
-                val partitionedQueueName = partitioningService.getPartitionedQueueName(queue.queueName, partitionNumber)
-                val tierKey = "$tierPrefix:${queue.tenantId}:$partitionedQueueName"
-
-                redisTemplate.opsForList()
-                    .range(tierKey, 0, -1)
-                    .flatMap { messageId ->
-                        getMessageDetails(messageId, "COLD")
-                    }
+            messages.drop(offset).take(maxMessages).map { message ->
+                TierMessageInfo(
+                    messageId = message.messageId,
+                    messageBody = message.messageBody,
+                    attributes = message.attributes,
+                    sentTimestamp = message.sentTimestamp.toString(),
+                    receivedCount = message.receiveCount,
+                    tier = "COLD",
+                    movedToTierAt = null, // COLD 메시지의 이동 시간 정보는 별도 관리 필요
+                    sizeBytes = message.messageBody.length.toLong(),
+                    compressionType = "gzip" // COLD 계층은 gzip 압축 사용
+                )
             }
-            .collectList()
-            .map { allMessages ->
-                allMessages
-                    .sortedBy { it.sentTimestamp }
-                    .drop(offset)
-                    .take(maxMessages)
-            }
+        }
+            .onErrorReturn(emptyList())
     }
 
     /**
@@ -577,6 +636,61 @@ class StorageStatsService(
             .get("message:$messageId")
             .map { messageJson ->
                 objectMapper.readValue(messageJson, Message::class.java)
+            }
+    }
+
+    /**
+     * WARM→COLD 배치 메시지 이동 (동시성 문제 해결)
+     */
+    fun moveMessagesBatchWarmToCold(messageIds: List<String>, queue: Queue): Mono<Long> {
+        if (messageIds.isEmpty()) {
+            return Mono.just(0L)
+        }
+
+        logger.info("WARM→COLD 배치 이동 시작: ${queue.queueName}, ${messageIds.size}개 메시지")
+
+        return Flux.fromIterable(messageIds)
+            .flatMap { messageId ->
+                warmTierManagerService.getMessageFromWarm(messageId)
+                    .cast(Message::class.java)
+                    .map { message -> messageId to message }
+            }
+            .collectList()
+            .flatMap { messagesPairs ->
+                val validMessages = messagesPairs.mapNotNull { (messageId, message) ->
+                    if (message != null) message else {
+                        logger.warn("WARM에서 메시지를 찾을 수 없음: $messageId")
+                        null
+                    }
+                }
+
+                if (validMessages.isNotEmpty()) {
+                    // 배치로 COLD 저장소에 저장
+                    mono {
+                        coldStorageService.saveBatch(validMessages)
+                    }
+                        .flatMap { batchResult ->
+                            if (batchResult.successCount > 0) {
+                                // 성공한 메시지들을 WARM에서 제거
+                                val successfulMessageIds = validMessages.take(batchResult.successCount).map { it.messageId }
+                                Flux.fromIterable(successfulMessageIds)
+                                    .flatMap { messageId ->
+                                        warmTierManagerService.deleteMessageFromWarm(messageId)
+                                            .then(updateMessageTier(messageId, "COLD"))
+                                    }
+                                    .count()
+                                    .doOnSuccess { removedCount ->
+                                        logger.info("WARM→COLD 배치 이동 완료: ${queue.queueName}, 성공: ${batchResult.successCount}개, WARM 제거: ${removedCount}개")
+                                    }
+                            } else {
+                                logger.error("WARM→COLD 배치 저장 실패: ${queue.queueName}, 오류: ${batchResult.errors}")
+                                Mono.just(0L)
+                            }
+                        }
+                } else {
+                    logger.warn("WARM→COLD 배치 이동: 유효한 메시지가 없음")
+                    Mono.just(0L)
+                }
             }
     }
 
