@@ -12,6 +12,7 @@ import org.springframework.http.MediaType
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureWebTestClient
 @TestConstructor(autowireMode = TestConstructor.AutowireMode.ALL)
+@org.springframework.test.context.ActiveProfiles("test")
 class QueueControllerIntegrationTest(
     private val webTestClient: WebTestClient
 ) {
@@ -39,7 +40,7 @@ class QueueControllerIntegrationTest(
             .expectBody()
             .jsonPath("$.success").isEqualTo(true)
             .jsonPath("$.data.queueName").isEqualTo(uniqueQueueName)
-            .jsonPath("$.data.tenantId").isEqualTo("tenant-1")
+            .jsonPath("$.data.tenantId").isEqualTo("test-tenant")
     }
 
     @Test
@@ -65,9 +66,10 @@ class QueueControllerIntegrationTest(
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(request)
             .exchange()
-            .expectStatus().isCreated // API Response 구조상 HTTP 201이지만 success: false
+            .expectStatus().isBadRequest
             .expectBody()
             .jsonPath("$.success").isEqualTo(false)
+            .jsonPath("$.error.code").isEqualTo("BAD_REQUEST")
             .jsonPath("$.error.code").isEqualTo("QUEUE_ALREADY_EXISTS")
     }
 
@@ -84,9 +86,10 @@ class QueueControllerIntegrationTest(
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(request)
             .exchange()
-            .expectStatus().isCreated // API Response 구조상 HTTP 201이지만 success: false
+            .expectStatus().isUnauthorized
             .expectBody()
             .jsonPath("$.success").isEqualTo(false)
+            .jsonPath("$.error.code").isEqualTo("UNAUTHORIZED")
             .jsonPath("$.error.code").isEqualTo("UNAUTHORIZED")
     }
 

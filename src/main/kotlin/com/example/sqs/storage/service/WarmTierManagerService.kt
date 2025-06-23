@@ -3,6 +3,7 @@ package com.example.sqs.storage.service
 import com.example.sqs.message.domain.Message
 import com.example.sqs.storage.domain.StorageTier
 import com.example.sqs.storage.dto.BatchMoveResult
+import com.example.sqs.common.redis.RedisKeyManager
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
 import org.springframework.data.redis.core.ReactiveRedisTemplate
@@ -20,7 +21,8 @@ import java.time.Instant
 class WarmTierManagerService(
     private val redisTemplate: ReactiveRedisTemplate<String, String>,
     private val rocksDBService: RocksDBWarmStorageService,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    private val redisKeyManager: RedisKeyManager
 ) {
 
     private val logger = LoggerFactory.getLogger(WarmTierManagerService::class.java)
@@ -51,13 +53,6 @@ class WarmTierManagerService(
                 } else {
                     logger.warn("HOT에서 메시지를 찾을 수 없음: $messageId")
                     Mono.just(false)
-                }
-            }
-            .doOnSuccess { success ->
-                if (success) {
-                    logger.info("메시지 WARM 계층 이동 완료: $messageId")
-                } else {
-                    logger.error("메시지 WARM 계층 이동 실패: $messageId")
                 }
             }
             .onErrorResume { e ->
@@ -184,7 +179,7 @@ class WarmTierManagerService(
      */
     private fun getMessageFromRedis(messageId: String): Mono<Message?> {
         return redisTemplate.opsForValue()
-            .get("message:$messageId")
+            .get(redisKeyManager.getMessageKey(messageId))
             .map { messageJson -> objectMapper.readValue(messageJson, Message::class.java) }
     }
 
@@ -194,17 +189,23 @@ class WarmTierManagerService(
     private fun removeMessageFromRedis(messageId: String, tenantId: String, queueName: String): Mono<Void> {
         // 파티션 4개에서 메시지 제거 시도 (Standard 큐는 어느 파티션에 있는지 모르므로)
         val partitionCount = 4
-        
+
         return Flux.merge(
             // 메시지 본체 삭제
-            redisTemplate.delete("message:$messageId"),
+            redisTemplate.delete(redisKeyManager.getMessageKey(messageId)),
             // 모든 파티션에서 제거 시도
             Flux.range(0, partitionCount)
                 .flatMap { partitionNumber ->
-                    redisTemplate.opsForList().remove("hot:queue:$tenantId:${queueName}_partition_$partitionNumber", 1, messageId)
+                    redisTemplate.opsForList().remove(
+                        redisKeyManager.getHotQueueKey(tenantId, queueName, partitionNumber), 
+                        1, messageId
+                    )
                 },
-            // HOT 인덱스에서 제거 (인덱스는 파티션별로 없는 것 같으니 그대로 유지)
-            redisTemplate.opsForZSet().remove("hot:index:$tenantId:$queueName", messageId)
+            // HOT 인덱스에서 제거
+            redisTemplate.opsForZSet().remove(
+                redisKeyManager.getHotIndexKey(tenantId, queueName), 
+                messageId
+            )
         ).then()
     }
 
@@ -223,12 +224,12 @@ class WarmTierManagerService(
      * 메시지 위치 정보 업데이트 (해시 타입으로 저장)
      */
     private fun updateMessageLocation(messageId: String, tier: StorageTier): Mono<Boolean> {
-        val locationKey = "message:location:$messageId"
+        val locationKey = redisKeyManager.getMessageLocationKey(messageId)
         val updateData = mapOf(
             "tier" to tier.name,
             "lastMovedAt" to Instant.now().toString()
         )
-        
+
         return redisTemplate.opsForHash<String, String>()
             .putAll(locationKey, updateData)
             .then(
@@ -243,7 +244,7 @@ class WarmTierManagerService(
      * 메시지 위치 정보 제거 (해시 키 삭제)
      */
     private fun removeMessageLocation(messageId: String): Mono<Boolean> {
-        val locationKey = "message:location:$messageId"
+        val locationKey = redisKeyManager.getMessageLocationKey(messageId)
         return redisTemplate.delete(locationKey)
             .map { it > 0 }
             .onErrorReturn(false)
@@ -265,11 +266,8 @@ class WarmTierManagerService(
      */
     fun deleteAllQueueMessages(tenantId: String, queueName: String): Mono<Int> {
         logger.info("큐 ${tenantId}:${queueName} WARM 계층 메시지 삭제 시작")
-        
+
         return rocksDBService.deleteQueueMessages(tenantId, queueName)
-            .doOnNext { deletedCount ->
-                logger.info("큐 ${tenantId}:${queueName} WARM 계층에서 ${deletedCount}개 메시지 삭제 완료")
-            }
     }
 }
 

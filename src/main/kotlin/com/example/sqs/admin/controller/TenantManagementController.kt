@@ -2,7 +2,7 @@ package com.example.sqs.admin.controller
 
 import com.example.sqs.admin.domain.*
 import com.example.sqs.admin.service.TenantManagementService
-import com.example.sqs.common.ApiResponse
+import com.example.sqs.common.domain.ApiResponse
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.PageRequest
 import org.springframework.web.bind.annotation.*

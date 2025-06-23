@@ -14,6 +14,7 @@ import org.springframework.test.web.reactive.server.WebTestClient
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureWebTestClient
 @TestConstructor(autowireMode = TestConstructor.AutowireMode.ALL)
+@org.springframework.test.context.ActiveProfiles("test")
 class MessageIntegrationTest(private val webTestClient: WebTestClient) {
 
     @Test
@@ -175,7 +176,10 @@ class MessageIntegrationTest(private val webTestClient: WebTestClient) {
             .header("Content-Type", "application/json")
             .bodyValue(invalidRequestJson)
             .exchange()
-            .expectStatus().is4xxClientError
+            .expectStatus().isOk
+            .expectBody()
+            .jsonPath("$.success").isEqualTo(false)
+            .jsonPath("$.error.code").isEqualTo("BAD_REQUEST")
         
         println("✅ 잘못된 메시지 전송 요청 거부 확인")
         
@@ -325,7 +329,7 @@ class MessageIntegrationTest(private val webTestClient: WebTestClient) {
         """.trimIndent()
         
         val deleteResponse = webTestClient.post()
-            .uri("/api/v1/queues/$testQueueName/messages/delete-batch")
+            .uri("/api/v1/queues/$testQueueName/messages/batch-delete")
             .header("X-API-Key", apiKey)
             .header("Content-Type", "application/json")
             .bodyValue(batchDeleteJson)

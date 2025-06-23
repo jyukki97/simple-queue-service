@@ -40,16 +40,14 @@ class TieringScheduler(
             queueRepository.findAllQueues()
                 .flatMap { queue ->
                     if (queue.attributes.fifoQueue) {
-                        logger.debug("FIFO 큐 처리: ${queue.queueName}")
                         processFifoQueueTiering(queue)
                     } else {
-                        logger.debug("Standard 큐 처리: ${queue.queueName}")
                         processStandardQueueTiering(queue)
                     }
                 }
                 .subscribeOn(Schedulers.boundedElastic())
                 .subscribe(
-                    { result -> logger.debug("큐 계층화 완료: $result") },
+                    { },
                     { error -> logger.error("계층화 정책 실행 중 오류 발생", error) },
                     { logger.info("모든 큐 계층화 정책 실행 완료") }
                 )

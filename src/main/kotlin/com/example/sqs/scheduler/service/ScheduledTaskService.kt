@@ -40,7 +40,7 @@ class ScheduledTaskService(
                     }
             }
             .then()
-            .doOnSuccess { logger.debug("모든 큐의 가시성 타임아웃 복원 작업 완료") }
+            .doOnSuccess { logger.info("모든 큐의 가시성 타임아웃 복원 작업 완료") }
             .doOnError { error -> logger.error("가시성 타임아웃 복원 작업 중 전체 오류 발생", error) }
             .subscribe()
     }
@@ -51,7 +51,6 @@ class ScheduledTaskService(
      */
     @Scheduled(fixedRate = 10000) // 10초
     fun processDelayedMessages() {
-        logger.debug("지연 메시지 처리 작업 시작")
         
         queueRepository.findAllQueues()
             .flatMap { queue ->
@@ -66,7 +65,7 @@ class ScheduledTaskService(
                     }
             }
             .then()
-            .doOnSuccess { logger.debug("모든 큐의 지연 메시지 처리 작업 완료") }
+            .doOnSuccess { logger.info("모든 큐의 지연 메시지 처리 작업 완료") }
             .doOnError { error -> logger.error("지연 메시지 처리 작업 중 전체 오류 발생", error) }
             .subscribe()
     }
@@ -106,7 +105,6 @@ class ScheduledTaskService(
      */
     @Scheduled(fixedRate = 60000) // 1분
     fun processDLQTransfer() {
-        logger.debug("DLQ 이동 처리 작업 시작")
         
         queueRepository.findAllQueues()
             .filter { queue -> queue.attributes.deadLetterTargetArn != null }
@@ -122,7 +120,7 @@ class ScheduledTaskService(
                     }
             }
             .then()
-            .doOnSuccess { logger.debug("모든 큐의 DLQ 이동 처리 작업 완료") }
+            .doOnSuccess { logger.info("모든 큐의 DLQ 이동 처리 작업 완료") }
             .doOnError { error -> logger.error("DLQ 이동 처리 작업 중 전체 오류 발생", error) }
             .subscribe()
     }

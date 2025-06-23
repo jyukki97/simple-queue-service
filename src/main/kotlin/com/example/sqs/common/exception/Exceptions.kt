@@ -9,14 +9,6 @@ class EntityNotFoundException(
 ) : RuntimeException(message)
 
 /**
- * 작업 실패 예외
- */
-class OperationFailedException(
-    override val message: String,
-    val code: String = "OPERATION_FAILED"
-) : RuntimeException(message)
-
-/**
  * 인증 실패 예외
  */
 class AuthenticationException(

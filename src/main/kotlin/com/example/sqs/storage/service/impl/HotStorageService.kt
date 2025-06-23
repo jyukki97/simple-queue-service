@@ -1,5 +1,6 @@
 package com.example.sqs.storage.service.impl
 
+import com.example.sqs.common.redis.RedisKeyManager
 import com.example.sqs.message.domain.Message
 import com.example.sqs.storage.domain.BatchResult
 import com.example.sqs.storage.domain.StorageTier
@@ -22,24 +23,22 @@ import java.time.Instant
 @Service
 class HotStorageService(
     private val redisTemplate: ReactiveRedisTemplate<String, String>,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    private val redisKeyManager: RedisKeyManager
 ) : StorageTierService {
 
     override val tier = StorageTier.HOT
 
     companion object {
-        private const val HOT_MESSAGE_PREFIX = "hot:message:"
         private const val HOT_QUEUE_PREFIX = "hot:queue:"
-        private const val HOT_QUEUE_INDEX_PREFIX = "hot:index:"
-        private const val HOT_METRICS_KEY = "hot:metrics"
         private const val DEFAULT_TTL_HOURS = 1L
     }
 
     override suspend fun saveMessage(message: Message): Boolean {
         return try {
-            val messageKey = message.getMessageKey()
-            val queueKey = HOT_QUEUE_PREFIX + "${message.tenantId}:${message.queueName}"
-            val indexKey = HOT_QUEUE_INDEX_PREFIX + "${message.tenantId}:${message.queueName}"
+            val messageKey = redisKeyManager.getMessageKey(message.messageId)
+            val queueKey = redisKeyManager.getHotQueueKey(message.tenantId, message.queueName)
+            val indexKey = redisKeyManager.getHotIndexKey(message.tenantId, message.queueName)
 
             val messageJson = objectMapper.writeValueAsString(message)
             val ttl = Duration.ofHours(DEFAULT_TTL_HOURS)
@@ -98,7 +97,7 @@ class HotStorageService(
 
     override suspend fun getMessage(messageId: String): Message? {
         return try {
-            val messageKey = HOT_MESSAGE_PREFIX + messageId
+            val messageKey = redisKeyManager.getMessageKey(messageId)
             val messageJson = redisTemplate.opsForValue()
                 .get(messageKey)
                 .awaitFirstOrNull()
@@ -162,7 +161,7 @@ class HotStorageService(
 
     override suspend fun deleteMessage(messageId: String): Boolean {
         return try {
-            val messageKey = HOT_MESSAGE_PREFIX + messageId
+            val messageKey = redisKeyManager.getMessageKey(messageId)
             val deleted = redisTemplate.opsForValue()
                 .delete(messageKey)
                 .awaitSingle()
@@ -199,12 +198,12 @@ class HotStorageService(
     override suspend fun getExpiredMessages(maxAge: Duration, limit: Int): List<Message> {
         return try {
             val cutoffTime = Instant.now().minus(maxAge)
-            val pattern = HOT_MESSAGE_PREFIX + "*"
+            val pattern = redisKeyManager.getMessagePattern()
             val expiredMessages = mutableListOf<Message>()
 
             // 패턴 매칭으로 모든 핫 메시지 키 조회
             redisTemplate.scan()
-                .filter { it.startsWith(HOT_MESSAGE_PREFIX) }
+                .filter { it.startsWith(pattern.removeSuffix("*")) }
                 .take(limit.toLong())
                 .collectList()
                 .awaitSingle()
@@ -234,7 +233,7 @@ class HotStorageService(
     override suspend fun getMetrics(): TierMetrics {
         return try {
             val metricsJson = redisTemplate.opsForValue()
-                .get(HOT_METRICS_KEY)
+                .get(redisKeyManager.getHotMetricsKey())
                 .awaitFirstOrNull()
 
             if (metricsJson != null) {
@@ -277,7 +276,7 @@ class HotStorageService(
     private suspend fun getMessageCount(): Long {
         return try {
             redisTemplate.scan()
-                .filter { it.startsWith(HOT_MESSAGE_PREFIX) }
+                .filter { it.startsWith(redisKeyManager.getMessagePrefix()) }
                 .count()
                 .awaitSingle()
         } catch (e: Exception) {
@@ -305,7 +304,7 @@ class HotStorageService(
 
             val metricsJson = objectMapper.writeValueAsString(updatedMetrics)
             redisTemplate.opsForValue()
-                .set(HOT_METRICS_KEY, metricsJson, Duration.ofHours(24))
+                .set(redisKeyManager.getHotMetricsKey(), metricsJson, Duration.ofHours(24))
                 .awaitSingleOrNull()
         } catch (e: Exception) {
             // 메트릭 업데이트 실패는 로깅만 하고 진행

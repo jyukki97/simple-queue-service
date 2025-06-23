@@ -17,10 +17,27 @@
 ```
 ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
 │   Hot Storage   │→│  Warm Storage   │→│  Cold Storage   │
-│ (Redis Memory)  │ │ (Redis Disk)    │ │ (File System)   │
+│ (Redis Memory)  │ │ (RocksDB)       │ │ (File System)   │
 │   < 1ms access  │ │ 1-10ms access   │ │100-1000ms acc.  │
 │   1 hour TTL    │ │  24 hour TTL    │ │  14 days TTL    │
 └─────────────────┘ └─────────────────┘ └─────────────────┘
+```
+
+## 🧪 테스트
+
+### 단위 테스트 실행
+```bash
+./gradlew test
+```
+
+### 성능 테스트 실행
+```bash
+./gradlew performanceTest
+```
+
+### 테스트 커버리지 확인
+```bash
+./gradlew test jacocoTestReport
 ```
 
 ## 시작하기
@@ -28,6 +45,7 @@
 ### 필요 조건
 - Java 21+
 - Docker & Docker Compose
+- Redis 6.0+
 
 ### 개발 환경 실행
 
@@ -47,7 +65,7 @@ docker-compose -f docker-compose.dev.yml up -d
 docker-compose up -d
 ```
 
-## API 테스트
+## 📋 API 테스트
 
 애플리케이션이 실행되면 다음 URL에서 접근 가능합니다:
 - **백엔드 API**: http://localhost:8080
@@ -117,7 +135,7 @@ src/main/kotlin/com/example/sqs/
 │   │   ├── UnifiedStorageService.kt   # 통합 스토리지 서비스
 │   │   └── impl/                      # 계층별 스토리지 구현
 │   │       ├── HotStorageService.kt   # 핫 스토리지 (Redis)
-│   │       ├── WarmStorageService.kt  # 웜 스토리지 (Redis Disk)
+│   │       ├── WarmStorageService.kt  # 웜 스토리지 (RocksDB)
 │   │       ├── ColdStorageService.kt  # 콜드 스토리지 (File)
 │   │       └── TieringManagerServiceImpl.kt # 자동 계층화 관리
 │   └── controller/

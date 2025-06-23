@@ -1,6 +1,7 @@
 package com.example.sqs.storage.controller
 
 import com.example.sqs.auth.domain.AuthContext
+import com.example.sqs.queue.domain.Queue
 import com.example.sqs.queue.service.QueueService
 import com.example.sqs.storage.dto.*
 import com.example.sqs.storage.service.StorageStatsService
@@ -24,7 +25,7 @@ class StorageController(
         val tenantId = AuthContext.getCurrentTenantId()
 
         return queueService.listQueues(tenantId, limit = 100, offset = 0, namePattern = null)
-            .flatMap { queue ->
+            .flatMap { queue: Queue ->
                 Mono.zip(
                     storageStatsService.getHotStats(queue),
                     storageStatsService.getWarmStats(queue),
@@ -40,19 +41,19 @@ class StorageController(
                 }
             }
             .collectList()
-            .map { queueStats ->
+            .map { queueStats: List<QueueStorageStats> ->
                 StorageStatsResponse(
                     totalQueues = queueStats.size,
                     queueStats = queueStats,
                     aggregatedStats = AggregatedStats(
-                        totalMessages = queueStats.sumOf {
-                            it.hotStats.messageCount + it.warmStats.messageCount + it.coldStats.messageCount
+                        totalMessages = queueStats.sumOf { stats ->
+                            stats.hotStats.messageCount + stats.warmStats.messageCount + stats.coldStats.messageCount
                         },
-                        totalHotMessages = queueStats.sumOf { it.hotStats.messageCount },
-                        totalWarmMessages = queueStats.sumOf { it.warmStats.messageCount },
-                        totalColdMessages = queueStats.sumOf { it.coldStats.messageCount },
-                        totalStorageBytes = queueStats.sumOf {
-                            it.hotStats.totalSizeBytes + it.warmStats.totalSizeBytes + it.coldStats.totalSizeBytes
+                        totalHotMessages = queueStats.sumOf { stats -> stats.hotStats.messageCount },
+                        totalWarmMessages = queueStats.sumOf { stats -> stats.warmStats.messageCount },
+                        totalColdMessages = queueStats.sumOf { stats -> stats.coldStats.messageCount },
+                        totalStorageBytes = queueStats.sumOf { stats ->
+                            stats.hotStats.totalSizeBytes + stats.warmStats.totalSizeBytes + stats.coldStats.totalSizeBytes
                         }
                     )
                 )

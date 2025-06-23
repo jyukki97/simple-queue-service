@@ -104,7 +104,7 @@ class ColdStorageService(
                             var actualNewMessageCount = 0
                             try {
                                 fileLock.lock()
-                                
+
                                 val allMessages = if (Files.exists(archiveFile)) {
                                     // 기존 파일에서 메시지 읽어와서 병합 (중복 방지)
                                     try {
@@ -114,7 +114,7 @@ class ColdStorageService(
                                         // 중복되지 않는 새 메시지만 추가
                                         val newUniqueMessages = queueMessages.filter { !existingMessageIds.contains(it.messageId) }
                                         actualNewMessageCount = newUniqueMessages.size
-                                        
+
                                         if (newUniqueMessages.isNotEmpty()) {
                                             logger.info("COLD 기존 파일에 ${newUniqueMessages.size}개 메시지 추가 (기존: ${existingMessages.size}개, 중복 제외: ${queueMessages.size - newUniqueMessages.size}개) - $archiveFile")
                                             existingMessages.addAll(newUniqueMessages)
@@ -122,14 +122,12 @@ class ColdStorageService(
                                             logger.info("COLD 모든 메시지가 중복이라 스킵 - $archiveFile")
                                         }
 
-                                        existingMessages
-                                    } catch (e: Exception) {
-                                        logger.warn("기존 파일 읽기 실패, 새로 생성: $archiveFile", e)
+                                        existingMessages                                        } catch (e: Exception) {
+                                            // 기존 파일이 손상된 경우 새로 생성
                                         actualNewMessageCount = queueMessages.size
                                         queueMessages
                                     }
                                 } else {
-                                    logger.info("COLD 새 파일 생성: ${queueMessages.size}개 메시지 - $archiveFile")
                                     actualNewMessageCount = queueMessages.size
                                     queueMessages
                                 }
@@ -138,7 +136,6 @@ class ColdStorageService(
                                 if (allMessages.isNotEmpty() && actualNewMessageCount > 0) {
                                     val messagesJson = objectMapper.writeValueAsString(allMessages)
                                     writeCompressedFile(archiveFile, messagesJson)
-                                    logger.debug("COLD 파일 저장 완료: ${allMessages.size}개 메시지 (새로운: ${actualNewMessageCount}개) - $archiveFile")
                                 }
                             } finally {
                                 fileLock.unlock()
@@ -513,23 +510,20 @@ class ColdStorageService(
         return try {
             val content = readCompressedFile(path)
             if (content.isBlank()) {
-                logger.warn("빈 파일 발견: $path")
                 return emptyList()
             }
-            
+
             try {
                 // 먼저 배열로 파싱 시도 (일반적인 경우)
                 val messages: List<Message> = objectMapper.readValue(
-                    content, 
+                    content,
                     objectMapper.typeFactory.constructCollectionType(List::class.java, Message::class.java)
                 )
-                logger.debug("파일에서 ${messages.size}개 메시지 읽기 성공: $path")
                 messages
             } catch (e: Exception) {
                 try {
                     // 단일 메시지로 파싱 시도 (레거시 호환성)
                     val message = objectMapper.readValue(content, Message::class.java)
-                    logger.debug("파일에서 단일 메시지 읽기 성공: $path")
                     listOf(message)
                 } catch (e2: Exception) {
                     logger.error("파일 파싱 실패: $path - 배열 파싱 오류: ${e.message}, 단일 메시지 파싱 오류: ${e2.message}")

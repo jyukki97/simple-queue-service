@@ -8,6 +8,7 @@ import com.example.sqs.queue.repository.QueueRepository
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.data.redis.core.ReactiveRedisTemplate
 import org.springframework.stereotype.Service
 import reactor.core.publisher.Flux
@@ -26,6 +27,7 @@ import io.prometheus.client.Gauge as PrometheusGauge
  * 실시간 메트릭 수집 및 관리 서비스
  */
 @Service
+@ConditionalOnProperty(name = ["app.metrics.enable-prometheus"], havingValue = "true", matchIfMissing = true)
 class MetricsService(
     private val queueRepository: QueueRepository,
     private val redisTemplate: ReactiveRedisTemplate<String, String>,
@@ -504,27 +506,52 @@ class MetricsService(
         }
     }
 
-    private val fifoHotMessageCount = PrometheusGauge.build()
-        .name("sqs_fifo_hot_message_count")
-        .help("FIFO Queue Hot Storage 메시지 개수")
-        .labelNames("tenant_id", "queue_name")
-        .register()
+    // Prometheus 메트릭을 lazy initialization으로 처리
+    private val fifoHotMessageCount: PrometheusGauge? by lazy {
+        try {
+            PrometheusGauge.build()
+                .name("sqs_fifo_hot_message_count")
+                .help("FIFO Queue Hot Storage 메시지 개수")
+                .labelNames("tenant_id", "queue_name")
+                .register()
+        } catch (e: Exception) {
+            null // 이미 등록된 경우 null 반환
+        }
+    }
 
-    private val fifoWarmMessageCount = PrometheusGauge.build()
-        .name("sqs_fifo_warm_message_count")
-        .help("FIFO Queue Warm Storage 메시지 개수")
-        .labelNames("tenant_id", "queue_name")
-        .register()
+    private val fifoWarmMessageCount: PrometheusGauge? by lazy {
+        try {
+            PrometheusGauge.build()
+                .name("sqs_fifo_warm_message_count")
+                .help("FIFO Queue Warm Storage 메시지 개수")
+                .labelNames("tenant_id", "queue_name")
+                .register()
+        } catch (e: Exception) {
+            null
+        }
+    }
 
-    private val fifoSwapOperations = PrometheusCounter.build()
-        .name("sqs_fifo_swap_operations_total")
-        .help("FIFO Queue 스왑 연산 횟수")
-        .labelNames("tenant_id", "queue_name", "direction")
-        .register()
+    private val fifoSwapOperations: PrometheusCounter? by lazy {
+        try {
+            PrometheusCounter.build()
+                .name("sqs_fifo_swap_operations_total")
+                .help("FIFO Queue 스왑 연산 횟수")
+                .labelNames("tenant_id", "queue_name", "direction")
+                .register()
+        } catch (e: Exception) {
+            null
+        }
+    }
 
-    private val fifoHotHitRatio = PrometheusGauge.build()
-        .name("sqs_fifo_hot_hit_ratio")
-        .help("FIFO Queue Hot Storage Hit Ratio")
-        .labelNames("tenant_id", "queue_name")
-        .register()
+    private val fifoHotHitRatio: PrometheusGauge? by lazy {
+        try {
+            PrometheusGauge.build()
+                .name("sqs_fifo_hot_hit_ratio")
+                .help("FIFO Queue Hot Storage Hit Ratio")
+                .labelNames("tenant_id", "queue_name")
+                .register()
+        } catch (e: Exception) {
+            null
+        }
+    }
 }

@@ -50,7 +50,7 @@ class QueueController(
         logger.info("큐 목록 조회 요청 - limit: $limit, offset: $offset, pattern: $namePattern")
         return queueService.listQueues(tenantId, limit, offset, namePattern)
             .collectList()
-            .map { queues -> ApiResponse.success(queues) }
+            .map { queues: List<Queue> -> ApiResponse.success(queues) }
     }
 
     @GetMapping("/{queueName}/attributes")

@@ -52,13 +52,60 @@ dependencies {
     testImplementation("com.github.kstyrc:embedded-redis:0.6")
 }
 
+tasks.withType<Test> {
+    useJUnitPlatform()
+    
+    // 테스트 실행 설정
+    maxHeapSize = "1g"
+    jvmArgs = listOf(
+        "-XX:+UseG1GC",
+        "-XX:MaxGCPauseMillis=100"
+    )
+    
+    // 테스트 리포트 설정
+    reports {
+        junitXml.required.set(true)
+        html.required.set(true)
+    }
+    
+    // 테스트 태그 설정
+    systemProperty("junit.jupiter.execution.parallel.enabled", "true")
+    systemProperty("junit.jupiter.execution.parallel.mode.default", "concurrent")
+    
+    // 성능 테스트는 기본적으로 제외
+    exclude("**/performance/**")
+    
+    // 테스트 분류
+    testLogging {
+        events("passed", "skipped", "failed")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showExceptions = true
+        showCauses = true
+        showStackTraces = true
+    }
+}
+
+// 성능 테스트 전용 태스크
+tasks.register<Test>("performanceTest") {
+    useJUnitPlatform()
+    include("**/performance/**")
+    
+    // 성능 테스트는 단독 실행
+    maxParallelForks = 1
+    
+    // 더 많은 힙 메모리 할당
+    maxHeapSize = "2g"
+    
+    group = "verification"
+    description = "Runs performance tests"
+}
+
+// 테스트 커버리지를 위한 JaCoCo 플러그인 (선택사항)
+// apply(plugin = "jacoco")
+
 tasks.withType<KotlinCompile> {
     kotlinOptions {
         freeCompilerArgs += "-Xjsr305=strict"
         jvmTarget = "21"
     }
-}
-
-tasks.withType<Test> {
-    useJUnitPlatform()
 }

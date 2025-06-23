@@ -37,13 +37,6 @@ class FifoTieringPolicyImpl(
         val countExceeded = stats.isCountExceeded(getHotMaxCount())
         val timeExceeded = stats.isTimeExceeded(getHotTimeThresholdHours())
 
-        if (countExceeded) {
-            logger.debug("Hot 개수 초과: ${stats.messageCount} > ${getHotMaxCount()}")
-        }
-        if (timeExceeded) {
-            logger.debug("Hot 시간 초과: 가장 오래된 메시지 ${stats.oldestMessageTime}")
-        }
-
         return countExceeded || timeExceeded
     }
 
@@ -146,7 +139,7 @@ class FifoTieringPolicyImpl(
                     val hotMessages = tuple.t1
                     val warmMessages = tuple.t2
                     performPartitionSwap(hotKey, warmKey, hotMessages, warmMessages)
-                        .map { Pair(hotMessages.size, warmMessages.size) }
+                        .then(Mono.fromCallable { Pair(hotMessages.size, warmMessages.size) })
                 }
             }
             .reduce(Pair(0, 0)) { acc, pair ->

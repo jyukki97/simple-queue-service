@@ -12,8 +12,38 @@ app:
     scheduler-interval: 5000  # 테스트에서는 5초로 단축
     default-message-retention-period: 3600  # 테스트에서는 1시간
     max-receive-count: 3
+    partition-count: 4
+    enable-hot-warm-swap: false  # 테스트에서는 비활성화
+    
+  storage:
+    hot-ttl-hours: 1
+    warm-ttl-hours: 2
+    cold-path: "./test-data/cold-${random.uuid}"  # 테스트마다 고유한 경로
+    warm-path: "./test-data/warm-${random.uuid}"  # 테스트마다 고유한 경로
+    compression-enabled: false  # 테스트에서는 비활성화
+    batch-size: 10
+    enable-hot-warm-swap: false
+    
+  metrics:
+    enable-prometheus: false
+    retention-days: 1
+    collection-interval-seconds: 10
+
+# RocksDB 설정 - 테스트용
+storage:
+  warm:
+    rocksdb:
+      path: "./test-data/rocksdb-${random.uuid}"  # 테스트마다 고유한 경로
+      max-open-files: 100
+      write-buffer-size: 8388608  # 8MB (기본값보다 작게)
+      max-write-buffer-number: 2
 
 logging:
   level:
     com.example.sqs: DEBUG
     org.springframework.data.redis: WARN
+    org.springframework.test: WARN
+    reactor.netty: WARN
+    org.rocksdb: WARN
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"

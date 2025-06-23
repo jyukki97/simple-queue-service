@@ -2,7 +2,6 @@ package com.example.sqs.admin.service
 
 import com.example.sqs.admin.domain.*
 import com.example.sqs.common.exception.EntityNotFoundException
-import com.example.sqs.common.exception.OperationFailedException
 import com.example.sqs.tenant.domain.Tenant
 import com.example.sqs.tenant.repository.TenantRepository
 import org.springframework.data.domain.Page
@@ -28,7 +27,6 @@ class TenantManagementService(
         
         try {
             val apiKey = generateApiKey()
-            logger.debug("Generated API key: {}", apiKey)
             
             val tenant = Tenant(
                 tenantId = UUID.randomUUID().toString(),
@@ -37,16 +35,14 @@ class TenantManagementService(
                 createdAt = Instant.now(),
                 isActive = true
             )
-            logger.debug("Created tenant entity: {}", tenant)
 
             val savedTenant = tenantRepository.save(tenant).awaitSingle()
-            logger.info("Saved tenant to repository: {}", savedTenant)
+            logger.info("Created tenant: {} with API key", savedTenant.tenantId)
 
             val quota = request.quota ?: getDefaultQuota()
             val email = request.email ?: "${tenant.name.lowercase().replace(" ", ".")}@example.com"
             
             val response = mapToTenantResponse(savedTenant, quota, email)
-            logger.info("Created tenant response: {}", response)
             return response
         } catch (e: Exception) {
             logger.error("Error creating tenant: ${e.message}", e)

@@ -69,3 +69,12 @@ data class QueueStatsResponse(
     val delayedMessages: Int,
     val deadLetterMessages: Int
 )
+
+/**
+ * 큐 목록 응답 데이터 클래스
+ */
+data class QueueListResponse(
+    val queues: List<Queue>,
+    val nextPageToken: String?
+)
+

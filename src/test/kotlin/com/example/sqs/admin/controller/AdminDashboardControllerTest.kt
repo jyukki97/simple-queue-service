@@ -31,6 +31,63 @@ class AdminDashboardControllerTest {
     
     private lateinit var adminDashboardController: AdminDashboardController
 
+    // 테스트 데이터
+    private val mockDashboard = AdminDashboard(
+        systemStats = SystemStats(
+            totalTenants = 10,
+            totalQueues = 50,
+            totalMessages = 1000,
+            totalMessagesProcessed = 900,
+            systemUptime = 86400,
+            memoryUsage = MemoryUsage(
+                usedMemory = 512_000_000,
+                maxMemory = 1_000_000_000,
+                usagePercentage = 51.2
+            ),
+            redisStats = RedisStats(
+                connectedClients = 5,
+                usedMemory = 100_000_000,
+                keyCount = 10000,
+                opsPerSecond = 200.0
+            )
+        ),
+        tenantUsageStats = listOf(),
+        recentActivities = listOf(),
+        systemAlerts = listOf()
+    )
+    
+    private val mockQueueStats = mapOf(
+        "tenant-1" to mapOf(
+            "queue-1" to mapOf(
+                "messagesAvailable" to 100,
+                "messagesInFlight" to 20
+            )
+        )
+    )
+    
+    private val mockAlerts = listOf(
+        SystemAlert(
+            id = "alert-1",
+            type = AlertType.MEMORY_HIGH,
+            title = "High Memory Usage",
+            message = "Memory usage exceeds 80%",
+            severity = AlertSeverity.HIGH,
+            timestamp = Instant.now(),
+            isResolved = false
+        )
+    )
+    
+    private val mockActivities = listOf(
+        ActivityLog(
+            id = "activity-1",
+            tenantId = "tenant-1",
+            action = "CREATE_QUEUE",
+            description = "큐 생성됨",
+            timestamp = Instant.now(),
+            severity = ActivitySeverity.INFO
+        )
+    )
+
     @BeforeEach
     fun setup() {
         adminDashboardController = AdminDashboardController(
@@ -38,84 +95,13 @@ class AdminDashboardControllerTest {
             alertService,
             activityLogService
         )
-        
-        // Mock Dashboard
-        val mockDashboard = AdminDashboard(
-            systemStats = SystemStats(
-                totalTenants = 10,
-                totalQueues = 50,
-                totalMessages = 1000,
-                totalMessagesProcessed = 900,
-                systemUptime = 86400,
-                memoryUsage = MemoryUsage(
-                    usedMemory = 512_000_000,
-                    maxMemory = 1_000_000_000,
-                    usagePercentage = 51.2
-                ),
-                redisStats = RedisStats(
-                    connectedClients = 5,
-                    usedMemory = 100_000_000,
-                    keyCount = 10000,
-                    opsPerSecond = 200.0
-                )
-            ),
-            tenantUsageStats = listOf(),
-            recentActivities = listOf(),
-            systemAlerts = listOf()
-        )
-        
-        runBlocking {
-            `when`(adminDashboardService.getDashboard()).thenReturn(mockDashboard)
-        }
-        
-        // Mock Queue Stats
-        val mockQueueStats = mapOf(
-            "tenant-1" to mapOf(
-                "queue-1" to mapOf(
-                    "messagesAvailable" to 100,
-                    "messagesInFlight" to 20
-                )
-            )
-        )
-        
-        runBlocking {
-            `when`(adminDashboardService.getQueueStats()).thenReturn(mockQueueStats)
-        }
-        
-        // Mock Alerts
-        val mockAlerts = listOf(
-            SystemAlert(
-                id = "alert-1",
-                type = AlertType.MEMORY_HIGH,
-                title = "High Memory Usage",
-                message = "Memory usage exceeds 80%",
-                severity = AlertSeverity.HIGH,
-                timestamp = Instant.now(),
-                isResolved = false
-            )
-        )
-        
-        `when`(alertService.getActiveAlerts()).thenReturn(mockAlerts)
-        `when`(alertService.getAlert("alert-1")).thenReturn(mockAlerts[0])
-        `when`(alertService.resolveAlert("alert-1")).thenReturn(true)
-        
-        // Mock Activities
-        val mockActivities = listOf(
-            ActivityLog(
-                id = "activity-1",
-                tenantId = "tenant-1",
-                action = "CREATE_QUEUE",
-                description = "큐 생성됨",
-                timestamp = Instant.now(),
-                severity = ActivitySeverity.INFO
-            )
-        )
-        
-        `when`(activityLogService.getRecentActivities(20)).thenReturn(mockActivities)
     }
 
     @Test
     fun `대시보드 조회시 정상 응답 반환`() = runBlocking {
+        // Given
+        `when`(adminDashboardService.getDashboard()).thenReturn(mockDashboard)
+        
         // When
         val response = adminDashboardController.getDashboard()
         
@@ -128,6 +114,9 @@ class AdminDashboardControllerTest {
     
     @Test
     fun `큐 통계 조회시 정상 응답 반환`() = runBlocking {
+        // Given
+        `when`(adminDashboardService.getQueueStats()).thenReturn(mockQueueStats)
+        
         // When
         val response = adminDashboardController.getQueueStats()
         
@@ -143,6 +132,9 @@ class AdminDashboardControllerTest {
     
     @Test
     fun `경고 목록 조회시 정상 응답 반환`() {
+        // Given
+        `when`(alertService.getActiveAlerts()).thenReturn(mockAlerts)
+        
         // When
         val response = adminDashboardController.getAlerts()
         
@@ -156,6 +148,9 @@ class AdminDashboardControllerTest {
     
     @Test
     fun `특정 경고 조회시 정상 응답 반환`() {
+        // Given
+        `when`(alertService.getAlert("alert-1")).thenReturn(mockAlerts[0])
+        
         // When
         val response = adminDashboardController.getAlert("alert-1")
         
@@ -167,6 +162,9 @@ class AdminDashboardControllerTest {
     
     @Test
     fun `경고 해결 처리시 정상 응답 반환`() {
+        // Given
+        `when`(alertService.resolveAlert("alert-1")).thenReturn(true)
+        
         // When
         val response = adminDashboardController.resolveAlert("alert-1")
         
@@ -178,6 +176,9 @@ class AdminDashboardControllerTest {
     
     @Test
     fun `활동 로그 조회시 정상 응답 반환`() {
+        // Given
+        `when`(activityLogService.getRecentActivities(20)).thenReturn(mockActivities)
+        
         // When
         val response = adminDashboardController.getActivities(20)
         

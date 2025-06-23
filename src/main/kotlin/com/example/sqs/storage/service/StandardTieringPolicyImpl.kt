@@ -90,22 +90,18 @@ class StandardTieringPolicyImpl(
      */
     private fun getOldestMessages(queueKey: String, count: Long): Flux<String> {
         if (count <= 0) {
+            logger.debug("이동할 메시지 수가 0 이하: $count")
             return Flux.empty()
         }
 
-        logger.debug("Redis 키에서 메시지 조회: queueKey=$queueKey, count=$count")
-
         return redisTemplate.opsForList()
             .size(queueKey)
-            .doOnNext { size -> logger.debug("Redis 리스트 크기: $size (키: $queueKey)") }
             .flatMapMany { actualSize ->
                 val safeCount = minOf(count, actualSize)
-                logger.debug("실제 조회할 메시지 수: $safeCount")
                 if (safeCount > 0) {
                     redisTemplate.opsForList()
                         .range(queueKey, 0, safeCount - 1)
                 } else {
-                    logger.debug("조회할 메시지가 없음")
                     Flux.empty()
                 }
             }

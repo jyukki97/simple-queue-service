@@ -1,5 +1,6 @@
 package com.example.sqs.storage.service
 
+import com.example.sqs.common.redis.RedisKeyManager
 import com.example.sqs.message.domain.Message
 import com.example.sqs.message.repository.MessageRepository
 import com.example.sqs.queue.domain.Queue
@@ -17,8 +18,8 @@ import java.util.*
 class FifoMessageService(
     private val redisTemplate: ReactiveRedisTemplate<String, String>,
     private val messageRepository: MessageRepository,
-    private val storageStatsService: StorageStatsService,
     private val objectMapper: ObjectMapper,
+    private val redisKeyManager: RedisKeyManager,
     @Value("\${queue.partition-count:4}") private val partitionCount: Int
 ) {
 
@@ -66,14 +67,14 @@ class FifoMessageService(
      * Hot Storage 파티션에서 메시지 수신
      */
     private fun receiveFromHotPartition(queue: Queue, partition: Int, maxMessages: Int): Flux<Message> {
-        val hotKey = queue.getHotKey(partition)
+        val hotKey = redisKeyManager.getHotQueueKey(queue, partition)
 
         return redisTemplate.opsForList()
             .leftPop(hotKey, maxMessages.toLong())
             .flatMap { messageId ->
                 getMessageDetails(messageId)
                     .doOnSuccess {
-                        logger.debug("Hot 파티션 $partition 에서 메시지 수신: messageId=$messageId")
+                        logger.info("HOT에서 메시지 수신: queueName=${queue.queueName}, partition=$partition, messageId=$messageId")
                     }
             }
     }
@@ -82,7 +83,7 @@ class FifoMessageService(
      * Warm Storage 파티션에서 메시지 수신 (자동으로 Hot으로 승격)
      */
     private fun receiveFromWarmPartition(queue: Queue, partition: Int, maxMessages: Int): Flux<Message> {
-        val warmKey = queue.getWarmKey(partition)
+        val warmKey = redisKeyManager.getWarmQueueKey(queue.tenantId, queue.queueName, partition)
 
         return redisTemplate.opsForList()
             .leftPop(warmKey, maxMessages.toLong())
@@ -93,7 +94,7 @@ class FifoMessageService(
                         promoteToHot(queue, messageId, partition)
                             .thenReturn(message)
                             .doOnSuccess {
-                                logger.debug("Warm 파티션 $partition 에서 메시지 수신 및 Hot 승격: messageId=$messageId")
+                                logger.info("WARM에서 메시지 수신 및 HOT 승격: queueName=${queue.queueName}, partition=$partition, messageId=$messageId")
                             }
                     }
             }
@@ -103,7 +104,7 @@ class FifoMessageService(
      * Cold Storage 파티션에서 메시지 수신 (자동으로 Hot으로 승격)
      */
     private fun receiveFromColdPartition(queue: Queue, partition: Int, maxMessages: Int): Flux<Message> {
-        val coldKey = queue.getColdKey(partition)
+        val coldKey = redisKeyManager.getColdQueueKey(queue.tenantId, queue.queueName)
 
         return redisTemplate.opsForList()
             .leftPop(coldKey, maxMessages.toLong())
@@ -114,7 +115,7 @@ class FifoMessageService(
                         promoteToHot(queue, messageId, partition)
                             .thenReturn(message)
                             .doOnSuccess {
-                                logger.debug("Cold 파티션 $partition 에서 메시지 수신 및 Hot 승격: messageId=$messageId")
+                                logger.info("COLD에서 메시지 수신 및 HOT 승격: queueName=${queue.queueName}, partition=$partition, messageId=$messageId")
                             }
                     }
             }
@@ -124,7 +125,7 @@ class FifoMessageService(
      * 메시지를 Hot Storage 파티션으로 승격
      */
     private fun promoteToHot(queue: Queue, messageId: String, partition: Int): Mono<Void> {
-        val hotKey = queue.getHotKey(partition)
+        val hotKey = redisKeyManager.getHotQueueKey(queue, partition)
 
         return redisTemplate.opsForList()
             .leftPush(hotKey, messageId)
@@ -154,7 +155,7 @@ class FifoMessageService(
      * 메시지를 InFlight 큐에 추가 (파티션 고려)
      */
     private fun addToInFlight(queue: Queue, message: Message, timeoutSeconds: Int): Mono<Void> {
-        val inFlightKey = queue.getInFlightKey()
+        val inFlightKey = redisKeyManager.getInFlightQueueKey(queue.tenantId, queue.queueName)
         val visibilityTimeout = Instant.now().plusSeconds(timeoutSeconds.toLong()).epochSecond
 
         return redisTemplate.opsForZSet()
@@ -167,7 +168,7 @@ class FifoMessageService(
      */
     private fun getMessageDetails(messageId: String): Mono<Message> {
         return redisTemplate.opsForValue()
-            .get("message:$messageId")
+            .get(redisKeyManager.getMessageKey(messageId))
             .map { messageJson ->
                 objectMapper.readValue(messageJson, Message::class.java)
             }
@@ -177,7 +178,7 @@ class FifoMessageService(
      * 메시지 상세 정보 저장 (JSON 형식으로 통일)
      */
     private fun saveMessageDetails(message: Message): Mono<Void> {
-        val messageKey = "message:${message.messageId}"
+        val messageKey = redisKeyManager.getMessageKey(message.messageId)
         val messageJson = objectMapper.writeValueAsString(message)
 
         return redisTemplate.opsForValue()
@@ -190,7 +191,7 @@ class FifoMessageService(
      */
     private fun updateMessageTier(messageId: String, tier: String): Mono<Void> {
         return redisTemplate.opsForHash<String, String>()
-            .put("message:$messageId", "tier", tier)
+            .put(redisKeyManager.getMessageKey(messageId), "tier", tier)
             .then()
     }
 
@@ -214,10 +215,3 @@ class FifoMessageService(
     }
 
 }
-
-/**
- * Queue 확장 함수들 (파티션 지원)
- */
-private fun Queue.getHotKey(partition: Int): String = "hot:queue:$tenantId:${queueName}_partition_$partition"
-private fun Queue.getWarmKey(partition: Int): String = "warm:queue:$tenantId:${queueName}_partition_$partition"
-private fun Queue.getColdKey(partition: Int): String = "cold:queue:$tenantId:${queueName}_partition_$partition"

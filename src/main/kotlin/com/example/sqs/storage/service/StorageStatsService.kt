@@ -1,5 +1,6 @@
 package com.example.sqs.storage.service
 
+import com.example.sqs.common.redis.RedisKeyManager
 import com.example.sqs.common.util.MessageParsingUtils
 import com.example.sqs.message.domain.Message
 import com.example.sqs.performance.partitioning.QueuePartitioningService
@@ -25,6 +26,7 @@ class StorageStatsService(
     private val partitioningService: QueuePartitioningService,
     private val objectMapper: ObjectMapper,
     private val warmTierManagerService: WarmTierManagerService,
+    private val redisKeyManager: RedisKeyManager,
     @Lazy private val coldStorageService: com.example.sqs.storage.service.impl.ColdStorageService
 ) {
 
@@ -285,7 +287,7 @@ class StorageStatsService(
             .index(queueKey, 0)  // 첫 번째 메시지 (가장 오래된)
             .flatMap { messageId ->
                 redisTemplate.opsForValue()
-                    .get("message:$messageId")
+                    .get(redisKeyManager.getMessageKey(messageId))
                     .map { messageJson ->
                         parseTimestampFromMessage(messageJson, messageId)
                     }
@@ -346,7 +348,7 @@ class StorageStatsService(
      */
     fun getMessageLocation(messageId: String): Mono<MessageLocation> {
         return redisTemplate.opsForHash<String, String>()
-            .entries("message:location:$messageId")
+            .entries(redisKeyManager.getMessageLocationKey(messageId))
             .collectMap({ it.key }, { it.value })
             .map { locationData ->
                 if (locationData.isEmpty()) {
@@ -379,7 +381,7 @@ class StorageStatsService(
      */
     fun promoteMessage(messageId: String, targetTier: String, tenantId: String): Mono<PromoteResult> {
         return redisTemplate.opsForHash<String, String>()
-            .get("message:$messageId", "tier")
+            .get(redisKeyManager.getMessageKey(messageId), "tier")
             .flatMap { currentTier ->
                 if (currentTier == targetTier) {
                     Mono.just(PromoteResult(currentTier, targetTier, false))
@@ -399,7 +401,7 @@ class StorageStatsService(
         // 여기서는 간단하게 메시지 메타데이터만 업데이트
         return redisTemplate.opsForHash<String, String>()
             .putAll(
-                "message:$messageId", mapOf(
+                redisKeyManager.getMessageKey(messageId), mapOf(
                     "tier" to toTier,
                     "movedAt" to Instant.now().toString(),
                     "promotedManually" to "true"
@@ -434,12 +436,11 @@ class StorageStatsService(
      */
     private fun getHotTierMessages(queue: Queue, maxMessages: Int, offset: Int): Mono<List<TierMessageInfo>> {
         val partitionCount = 4 // 설정에서 가져와야 함
-        val tierPrefix = "hot:queue"
 
         return Flux.range(0, partitionCount)
             .flatMap { partitionNumber ->
                 val partitionedQueueName = partitioningService.getPartitionedQueueName(queue.queueName, partitionNumber)
-                val tierKey = "$tierPrefix:${queue.tenantId}:$partitionedQueueName"
+                val tierKey = redisKeyManager.getHotQueueKey(queue.tenantId, partitionedQueueName)
 
                 redisTemplate.opsForList()
                     .range(tierKey, 0, -1)
@@ -507,7 +508,7 @@ class StorageStatsService(
      */
     private fun getMessageDetails(messageId: String, tier: String): Mono<TierMessageInfo> {
         return redisTemplate.opsForValue()
-            .get("message:$messageId")
+            .get(redisKeyManager.getMessageKey(messageId))
             .map { messageJson ->
                 MessageParsingUtils.parseMessageData(messageJson)?.let { messageData ->
                     val body = messageData["messageBody"]?.toString() ?: ""
@@ -601,7 +602,7 @@ class StorageStatsService(
         )
 
         return redisTemplate.opsForHash<String, String>()
-            .putAll("message:location:$messageId", locationData)
+            .putAll(redisKeyManager.getMessageLocationKey(messageId), locationData)
             .onErrorReturn(false)
     }
 
@@ -615,7 +616,7 @@ class StorageStatsService(
         )
 
         return redisTemplate.opsForHash<String, String>()
-            .putAll("message:location:$messageId", updateData)
+            .putAll(redisKeyManager.getMessageLocationKey(messageId), updateData)
             .onErrorReturn(false)
     }
 
@@ -623,7 +624,7 @@ class StorageStatsService(
      * 메시지 위치 정보 제거
      */
     fun removeMessageLocation(messageId: String): Mono<Boolean> {
-        return redisTemplate.delete("message:location:$messageId")
+        return redisTemplate.delete(redisKeyManager.getMessageLocationKey(messageId))
             .map { it > 0 }
             .onErrorReturn(false)
     }
@@ -633,7 +634,7 @@ class StorageStatsService(
      */
     private fun getMessageDetails(messageId: String): Mono<Message> {
         return redisTemplate.opsForValue()
-            .get("message:$messageId")
+            .get(redisKeyManager.getMessageKey(messageId))
             .map { messageJson ->
                 objectMapper.readValue(messageJson, Message::class.java)
             }

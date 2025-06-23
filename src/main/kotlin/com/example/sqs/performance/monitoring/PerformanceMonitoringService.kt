@@ -213,6 +213,47 @@ class PerformanceMonitoringService(
     ): String {
         return "${tenantId}:${operationName}:${queueName ?: "all"}"
     }
+    
+    /**
+     * 압축 비율을 계산합니다
+     */
+    fun calculateCompressionRatio(originalSize: Int, compressedSize: Int): Double {
+        return if (originalSize > 0) {
+            (originalSize - compressedSize).toDouble() / originalSize * 100
+        } else {
+            0.0
+        }
+    }
+
+    /**
+     * 배치 처리 시간을 기록합니다
+     */
+    fun recordBatchProcessingTime(tenantId: String, queueName: String, processingTimeMs: Long) {
+        meterRegistry.timer(
+            "sqs.batch.processing.time",
+            "tenant", tenantId,
+            "queue", queueName
+        ).record(Duration.ofMillis(processingTimeMs))
+    }
+
+    /**
+     * 배치 처리 결과를 기록합니다
+     */
+    fun recordBatchProcessingResults(tenantId: String, queueName: String, successCount: Int, failedCount: Int) {
+        meterRegistry.counter(
+            "sqs.batch.messages.successful",
+            "tenant", tenantId,
+            "queue", queueName
+        ).increment(successCount.toDouble())
+
+        meterRegistry.counter(
+            "sqs.batch.messages.failed",
+            "tenant", tenantId,
+            "queue", queueName
+        ).increment(failedCount.toDouble())
+    }
+
+    // ...existing code...
 }
 
 /**

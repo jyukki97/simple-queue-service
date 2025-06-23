@@ -14,6 +14,7 @@ import org.springframework.http.MediaType
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureWebTestClient
 @TestConstructor(autowireMode = TestConstructor.AutowireMode.ALL)
+@org.springframework.test.context.ActiveProfiles("test")
 class QueueManagementIntegrationTest(
     private val webTestClient: WebTestClient
 ) {
@@ -121,7 +122,7 @@ class QueueManagementIntegrationTest(
             .uri("/api/v1/queues")
             .header("X-API-Key", "invalid-api-key")
             .exchange()
-            .expectStatus().isOk
+            .expectStatus().isUnauthorized
             .expectBody()
             .jsonPath("$.success").isEqualTo(false)
             .jsonPath("$.error.code").isEqualTo("UNAUTHORIZED")

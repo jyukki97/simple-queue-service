@@ -1,7 +1,6 @@
 package com.example.sqs.common.exception
 
-import com.example.sqs.common.ApiError
-import com.example.sqs.common.ApiResponse
+import com.example.sqs.common.domain.ApiResponse
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.ExceptionHandler
@@ -30,13 +29,6 @@ class GlobalExceptionHandler {
     fun handleIllegalArgumentException(ex: IllegalArgumentException): ApiResponse<Nothing> {
         log.error("Bad request: {}", ex.message)
         return ApiResponse.error("BAD_REQUEST", ex.message ?: "Invalid request parameters")
-    }
-
-    @ExceptionHandler(OperationFailedException::class)
-    @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
-    fun handleOperationFailedException(ex: OperationFailedException): ApiResponse<Nothing> {
-        log.error("Operation failed: {}", ex.message, ex)
-        return ApiResponse.error(ex.code, ex.message ?: "Operation failed")
     }
 
     @ExceptionHandler(AuthenticationException::class)

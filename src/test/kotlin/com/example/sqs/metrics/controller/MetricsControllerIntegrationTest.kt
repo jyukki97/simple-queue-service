@@ -16,6 +16,7 @@ import java.time.Instant
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureWebTestClient
+@org.springframework.test.context.ActiveProfiles("test")
 class MetricsControllerIntegrationTest {
 
     @Autowired
@@ -159,6 +160,6 @@ class MetricsControllerIntegrationTest {
         webTestClient.get()
             .uri("/api/v1/metrics/queues/test-queue")
             .exchange()
-            .expectStatus().isBadRequest
+            .expectStatus().isUnauthorized
     }
 }

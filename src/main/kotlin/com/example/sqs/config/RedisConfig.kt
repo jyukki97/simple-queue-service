@@ -82,30 +82,3 @@ class RedisConfig(
         return ReactiveRedisTemplate(connectionFactory, serializationContext)
     }
 }
-
-@Component
-@ConfigurationProperties(prefix = "app.queue")
-data class QueueProperties(
-    var defaultVisibilityTimeout: Int = 30,
-    var maxMessageSize: Int = 262144,
-    var maxMessagesPerBatch: Int = 10,
-    var schedulerInterval: Long = 30000,
-    var defaultMessageRetentionPeriod: Int = 1209600,
-    var maxReceiveCount: Int = 3,
-    var enableCompression: Boolean = true,
-    var compressionThreshold: Int = 1024,
-    var partitionCount: Int = 4,
-    var enablePartitioning: Boolean = true
-)
-
-@Component
-@ConfigurationProperties(prefix = "app.redis.performance")
-data class RedisPerformanceProperties(
-    var ioThreadPoolSize: Int = 4,
-    var computationThreadPoolSize: Int = 4,
-    var commandTimeoutMs: Long = 5000,
-    var enablePipelining: Boolean = true,
-    var pipelineBufferSize: Int = 1000,
-    var maxPoolSize: Int = 20,
-    var minIdleSize: Int = 5
-)

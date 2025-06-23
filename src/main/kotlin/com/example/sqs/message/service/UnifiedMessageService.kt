@@ -12,6 +12,7 @@ import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import java.time.Instant
 import java.util.*
+import kotlin.math.abs
 
 @Service
 class UnifiedMessageService(
@@ -28,7 +29,7 @@ class UnifiedMessageService(
     fun receiveMessages(queue: Queue, maxMessages: Int, visibilityTimeoutSeconds: Int?, messageGroupId: String? = null): Flux<Message> {
         logger.debug("메시지 수신 시작: queue=${queue.queueName}, maxMessages=$maxMessages, fifo=${queue.attributes.fifoQueue}")
 
-        return if (queue.attributes.fifoQueue == true && messageGroupId != null) {
+        return if (queue.attributes.fifoQueue && messageGroupId != null) {
             // FIFO 큐에서 특정 MessageGroupId의 메시지만 수신
             receiveFromSpecificGroup(queue, maxMessages, messageGroupId, "hot")
                 .switchIfEmpty(
@@ -91,7 +92,7 @@ class UnifiedMessageService(
     private fun receiveFromHotPartition(queue: Queue, partition: Int, maxMessages: Int): Flux<Message> {
         val hotKey = queue.getHotKey(partition)
 
-        return if (queue.attributes.fifoQueue == true) {
+        return if (queue.attributes.fifoQueue) {
             // FIFO: 순서 보장을 위해 LPOP 사용
             redisTemplate.opsForList()
                 .leftPop(hotKey)
@@ -140,8 +141,8 @@ class UnifiedMessageService(
      */
     private fun receiveFromSpecificGroup(queue: Queue, maxMessages: Int, messageGroupId: String, tier: String): Flux<Message> {
         // MessageGroupId에 해당하는 파티션 계산
-        val partition = Math.abs(messageGroupId.hashCode()) % partitionCount
-        
+        val partition = abs(messageGroupId.hashCode()) % partitionCount
+
         return when (tier) {
             "hot" -> receiveFromHotPartition(queue, partition, maxMessages)
             "warm" -> receiveFromWarmPartition(queue, partition, maxMessages)
@@ -224,16 +225,16 @@ class UnifiedMessageService(
     private fun determinePartition(queue: Queue, message: Message): Int {
         return if (queue.attributes.fifoQueue == true) {
             // FIFO: MessageGroupId 필수 (Message 객체에서 직접 가져오거나 attributes에서)
-            val messageGroupId = message.messageGroupId 
+            val messageGroupId = message.messageGroupId
                 ?: message.attributes["MessageGroupId"]
                 ?: throw IllegalStateException("FIFO 큐에서 MessageGroupId가 누락되었습니다")
-            Math.abs(messageGroupId.hashCode()) % partitionCount
+            abs(messageGroupId.hashCode()) % partitionCount
         } else {
             // Standard: MessageGroupId가 있으면 사용, 없으면 messageId 사용
-            val groupId = message.messageGroupId 
-                ?: message.attributes["MessageGroupId"] 
+            val groupId = message.messageGroupId
+                ?: message.attributes["MessageGroupId"]
                 ?: message.messageId
-            Math.abs(groupId.hashCode()) % partitionCount
+            abs(groupId.hashCode()) % partitionCount
         }
     }
 }

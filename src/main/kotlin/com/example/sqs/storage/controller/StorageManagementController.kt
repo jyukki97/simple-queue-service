@@ -1,6 +1,6 @@
 package com.example.sqs.storage.controller
 
-import com.example.sqs.common.ApiResponse
+import com.example.sqs.common.domain.ApiResponse
 import com.example.sqs.storage.domain.*
 import com.example.sqs.storage.service.*
 import com.example.sqs.storage.dto.*

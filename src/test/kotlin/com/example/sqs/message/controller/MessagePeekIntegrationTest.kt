@@ -13,6 +13,7 @@ import org.springframework.test.web.reactive.server.expectBody
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureWebTestClient
 @TestConstructor(autowireMode = TestConstructor.AutowireMode.ALL)
+@org.springframework.test.context.ActiveProfiles("test")
 class MessagePeekIntegrationTest(private val webTestClient: WebTestClient) {
 
     companion object {
@@ -44,8 +45,9 @@ class MessagePeekIntegrationTest(private val webTestClient: WebTestClient) {
             .consumeWith { response ->
                 val body = response.responseBody!!
                 assert(body["success"] == true)
-                val data = body["data"] as List<*>
-                assert(data.isEmpty())
+                val data = body["data"] as Map<String, Any>
+                val messages = data["messages"] as List<*>
+                assert(messages.isEmpty())
             }
     }
 
@@ -92,16 +94,17 @@ class MessagePeekIntegrationTest(private val webTestClient: WebTestClient) {
                 val body = response.responseBody!!
                 assert(body["success"] == true)
                 
-                val data = body["data"] as List<Map<String, Any>>
-                assert(data.size == 2) // 최대 2개만 반환
+                val data = body["data"] as Map<String, Any>
+                val messages = data["messages"] as List<Map<String, Any>>
+                assert(messages.size == 2) // 최대 2개만 반환
                 
                 // 첫 번째 메시지 확인 (FIFO 순서)
-                val firstMessage = data[0]
+                val firstMessage = messages[0]
                 assert(firstMessage["messageBody"] == "첫 번째 메시지")
                 assert((firstMessage["attributes"] as Map<String, String>)["type"] == "test")
                 
                 // 두 번째 메시지 확인
-                val secondMessage = data[1]
+                val secondMessage = messages[1]
                 assert(secondMessage["messageBody"] == "두 번째 메시지")
             }
 
@@ -127,7 +130,7 @@ class MessagePeekIntegrationTest(private val webTestClient: WebTestClient) {
             .uri("/api/v1/queues/non-existent-queue/messages/peek")
             .header("X-API-Key", TEST_API_KEY)
             .exchange()
-            .expectStatus().isOk
+            .expectStatus().isNotFound
             .expectBody<Map<String, Any>>()
             .consumeWith { response ->
                 val body = response.responseBody!!
@@ -142,7 +145,7 @@ class MessagePeekIntegrationTest(private val webTestClient: WebTestClient) {
             .uri("/api/v1/queues/test-queue/messages/peek")
             .header("X-API-Key", "invalid-key")
             .exchange()
-            .expectStatus().isOk
+            .expectStatus().isUnauthorized
             .expectBody<Map<String, Any>>()
             .consumeWith { response ->
                 val body = response.responseBody!!
@@ -192,8 +195,9 @@ class MessagePeekIntegrationTest(private val webTestClient: WebTestClient) {
                 val body = response.responseBody!!
                 assert(body["success"] == true)
                 
-                val data = body["data"] as List<*>
-                assert(data.size == 10) // 최대 10개로 제한
+                val data = body["data"] as Map<String, Any>
+                val messages = data["messages"] as List<*>
+                assert(messages.size == 10) // 최대 10개로 제한
             }
     }
 }

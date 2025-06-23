@@ -26,7 +26,8 @@ class ApiKeyAuthenticationFilter(
         private val EXCLUDED_PATHS = setOf(
             "/actuator",
             "/health",
-            "/favicon.ico"
+            "/favicon.ico",
+            "/api/v1/ping"
         )
     }
     

@@ -7,7 +7,7 @@ import com.example.sqs.admin.domain.SystemStats
 import com.example.sqs.admin.service.ActivityLogService
 import com.example.sqs.admin.service.AdminDashboardService
 import com.example.sqs.admin.service.SystemAlertService
-import com.example.sqs.common.ApiResponse
+import com.example.sqs.common.domain.ApiResponse
 import com.example.sqs.common.exception.EntityNotFoundException
 import org.springframework.web.bind.annotation.*
 
@@ -100,7 +100,7 @@ class AdminDashboardController(
      * 시스템 상태를 조회합니다.
      */
     @GetMapping("/system/status")
-    fun getSystemStatus(): ApiResponse<Map<String, Any>> {
+    suspend fun getSystemStatus(): ApiResponse<Map<String, Any>> {
         val status = adminDashboardService.getSystemStatus()
         return ApiResponse.success(status)
     }

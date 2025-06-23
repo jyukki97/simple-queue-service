@@ -1,5 +1,6 @@
 package com.example.sqs.message.repository
 
+import com.example.sqs.common.redis.RedisKeyManager
 import com.example.sqs.message.domain.Message
 import com.example.sqs.message.domain.MessagePreview
 import com.example.sqs.queue.domain.Queue
@@ -16,7 +17,8 @@ import java.util.*
 @Repository
 class RedisMessageRepository(
     private val redisTemplate: ReactiveRedisTemplate<String, String>,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    private val redisKeyManager: RedisKeyManager
 ) : MessageRepository {
 
     private val logger = LoggerFactory.getLogger(RedisMessageRepository::class.java)
@@ -71,9 +73,9 @@ class RedisMessageRepository(
         logger.info("큐 메시지 전체 삭제 시작: queue=${queue.queueName}")
         
         return redisTemplate.delete(
-            queue.getMessagesKey(),
-            queue.getDelayedKey(),
-            queue.getInFlightKey()
+            redisKeyManager.getHotQueueKey(queue.tenantId, queue.queueName),
+            redisKeyManager.getDelayedQueueKey(queue.tenantId, queue.queueName),
+            redisKeyManager.getInFlightQueueKey(queue.tenantId, queue.queueName)
         ).then()
             .doOnSuccess { logger.info("큐 메시지 전체 삭제 완료: queue=${queue.queueName}") }
     }
@@ -82,7 +84,7 @@ class RedisMessageRepository(
         val now = Instant.now().epochSecond
         
         return redisTemplate.opsForZSet()
-            .removeRangeByScore(queue.getInFlightKey(), Range.closed(0.0, now.toDouble()))
+            .removeRangeByScore(redisKeyManager.getInFlightQueueKey(queue.tenantId, queue.queueName), Range.closed(0.0, now.toDouble()))
             .map { count ->
                 if (count > 0) {
                     logger.info("만료된 메시지 $count 개를 복원했습니다: queue=${queue.queueName}")
@@ -95,16 +97,16 @@ class RedisMessageRepository(
         val now = Instant.now().epochSecond
         
         return redisTemplate.opsForZSet()
-            .rangeByScore(queue.getDelayedKey(), Range.closed(0.0, now.toDouble()))
+            .rangeByScore(redisKeyManager.getDelayedQueueKey(queue.tenantId, queue.queueName), Range.closed(0.0, now.toDouble()))
             .collectList()
             .flatMap { messageIds ->
                 if (messageIds.isNotEmpty()) {
                     logger.info("지연된 메시지 ${messageIds.size}개를 available로 이동: queue=${queue.queueName}")
                     redisTemplate.opsForZSet()
-                        .removeRangeByScore(queue.getDelayedKey(), Range.closed(0.0, now.toDouble()))
+                        .removeRangeByScore(redisKeyManager.getDelayedQueueKey(queue.tenantId, queue.queueName), Range.closed(0.0, now.toDouble()))
                         .then(
                             redisTemplate.opsForList()
-                                .rightPushAll(queue.getMessagesKey(), messageIds)
+                                .rightPushAll(redisKeyManager.getHotQueueKey(queue.tenantId, queue.queueName), messageIds)
                         )
                         .map { messageIds.size.toLong() }
                 } else {
@@ -116,13 +118,13 @@ class RedisMessageRepository(
     private fun saveMessageDetails(message: Message): Mono<Void> {
         val messageData = objectMapper.writeValueAsString(message)
         return redisTemplate.opsForValue()
-            .set(message.getMessageKey(), messageData)
+            .set(redisKeyManager.getMessageKey(message.messageId), messageData)
             .then()
     }
 
     private fun getMessageDetails(messageId: String): Mono<Message> {
         return redisTemplate.opsForValue()
-            .get("message:$messageId")
+            .get(redisKeyManager.getMessageKey(messageId))
             .map { json -> objectMapper.readValue(json, Message::class.java) }
     }
 
@@ -131,12 +133,12 @@ class RedisMessageRepository(
             // 지연된 메시지는 delayed queue에 추가
             val score = message.visibleAt.epochSecond.toDouble()
             redisTemplate.opsForZSet()
-                .add(queue.getDelayedKey(), message.messageId, score)
+                .add(redisKeyManager.getDelayedQueueKey(queue.tenantId, queue.queueName), message.messageId, score)
                 .map { if (it) 1L else 0L }
         } else {
             // 즉시 처리 가능한 메시지는 available queue에 추가
             redisTemplate.opsForList()
-                .rightPush(queue.getMessagesKey(), message.messageId)
+                .rightPush(redisKeyManager.getHotQueueKey(queue.tenantId, queue.queueName), message.messageId)
         }
     }
 
@@ -144,7 +146,7 @@ class RedisMessageRepository(
         return Flux.range(1, maxMessages)
             .flatMap {
                 redisTemplate.opsForList()
-                    .leftPop(queue.getMessagesKey())
+                    .leftPop(redisKeyManager.getHotQueueKey(queue.tenantId, queue.queueName))
             }
             .filter { it != null }
     }
@@ -153,17 +155,17 @@ class RedisMessageRepository(
         val score = message.visibleAt.epochSecond.toDouble()
         val value = "${message.messageId}:${message.receiptHandle}"
         return redisTemplate.opsForZSet()
-            .add(queue.getInFlightKey(), value, score)
+            .add(redisKeyManager.getInFlightQueueKey(queue.tenantId, queue.queueName), value, score)
             .map { if (it) 1L else 0L }
     }
 
     private fun removeFromInFlight(queue: Queue, receiptHandle: String): Mono<Void> {
         return redisTemplate.opsForZSet()
-            .range(queue.getInFlightKey(), Range.closed(0L, -1L))
+            .range(redisKeyManager.getInFlightQueueKey(queue.tenantId, queue.queueName), Range.closed(0L, -1L))
             .filter { it.contains(":$receiptHandle") }
             .flatMap { value ->
                 redisTemplate.opsForZSet()
-                    .remove(queue.getInFlightKey(), value)
+                    .remove(redisKeyManager.getInFlightQueueKey(queue.tenantId, queue.queueName), value)
             }
             .then()
     }
@@ -173,7 +175,7 @@ class RedisMessageRepository(
         
         // available 큐에서 메시지 ID들을 가져와서 (제거하지 않고) 내용을 조회
         return redisTemplate.opsForList()
-            .range(queue.getMessagesKey(), 0, (maxMessages - 1).toLong())
+            .range(redisKeyManager.getHotQueueKey(queue.tenantId, queue.queueName), 0, (maxMessages - 1).toLong())
             .flatMap { messageId ->
                 getMessageDetails(messageId)
                     .map { message -> MessagePreview.fromMessage(message) }
