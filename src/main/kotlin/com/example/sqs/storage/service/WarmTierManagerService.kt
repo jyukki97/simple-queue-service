@@ -1,9 +1,10 @@
 package com.example.sqs.storage.service
 
+import com.example.sqs.common.redis.RedisKeyManager
 import com.example.sqs.message.domain.Message
 import com.example.sqs.storage.domain.StorageTier
+import com.example.sqs.storage.domain.WarmStorageStats
 import com.example.sqs.storage.dto.BatchMoveResult
-import com.example.sqs.common.redis.RedisKeyManager
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
 import org.springframework.data.redis.core.ReactiveRedisTemplate
@@ -197,13 +198,13 @@ class WarmTierManagerService(
             Flux.range(0, partitionCount)
                 .flatMap { partitionNumber ->
                     redisTemplate.opsForList().remove(
-                        redisKeyManager.getHotQueueKey(tenantId, queueName, partitionNumber), 
+                        redisKeyManager.getHotQueueKey(tenantId, queueName, partitionNumber),
                         1, messageId
                     )
                 },
             // HOT 인덱스에서 제거
             redisTemplate.opsForZSet().remove(
-                redisKeyManager.getHotIndexKey(tenantId, queueName), 
+                redisKeyManager.getHotIndexKey(tenantId, queueName),
                 messageId
             )
         ).then()
@@ -268,6 +269,32 @@ class WarmTierManagerService(
         logger.info("큐 ${tenantId}:${queueName} WARM 계층 메시지 삭제 시작")
 
         return rocksDBService.deleteQueueMessages(tenantId, queueName)
+    }
+
+    /**
+     * WARM 계층에서 가장 오래된 메시지들을 가져옴 (FIFO 순서 유지)
+     */
+    fun getOldestMessages(tenantId: String, queueName: String, count: Int): Flux<String> {
+        logger.debug("WARM 계층에서 오래된 메시지 ${count}개 조회: ${tenantId}:${queueName}")
+        
+        return rocksDBService.getOldestMessageIds(tenantId, queueName, count)
+            .doOnNext { messageId ->
+                logger.debug("WARM 오래된 메시지: $messageId")
+            }
+    }
+
+    /**
+     * WARM 계층에서 만료된 메시지들을 가져옴
+     */
+    fun getExpiredMessages(tenantId: String, queueName: String, thresholdHours: Long): Flux<String> {
+        logger.debug("WARM 계층에서 만료된 메시지 조회 (${thresholdHours}시간): ${tenantId}:${queueName}")
+        
+        val cutoffTime = Instant.now().minusSeconds(thresholdHours * 3600)
+        
+        return rocksDBService.getExpiredMessageIds(tenantId, queueName, cutoffTime)
+            .doOnNext { messageId ->
+                logger.debug("WARM 만료된 메시지: $messageId")
+            }
     }
 }
 

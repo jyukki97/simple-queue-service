@@ -18,11 +18,12 @@ import java.time.Instant
 class FifoTieringPolicyImpl(
     private val redisTemplate: ReactiveRedisTemplate<String, String>,
     private val objectMapper: ObjectMapper,
-    @Value("\${queue.partition-count:4}") private val partitionCount: Int,
-    @Value("\${queue.hot.max-count:1000}") private val hotMaxCount: Int,
-    @Value("\${queue.warm.max-count:5000}") private val warmMaxCount: Int,
-    @Value("\${queue.hot.time-threshold-hours:2}") private val hotTimeThresholdHours: Long,
-    @Value("\${queue.warm.time-threshold-hours:24}") private val warmTimeThresholdHours: Long
+    private val warmTierManagerService: WarmTierManagerService,
+    @Value("\${app.queue.partition-count:4}") private val partitionCount: Int,
+    @Value("\${app.storage.tiering.fifo.hot-max-count:100}") private val hotMaxCount: Int,
+    @Value("\${app.storage.tiering.fifo.warm-max-count:1000}") private val warmMaxCount: Int,
+    @Value("\${app.storage.tiering.fifo.hot-time-threshold-hours:1}") private val hotTimeThresholdHours: Long,
+    @Value("\${app.storage.tiering.fifo.warm-time-threshold-hours:24}") private val warmTimeThresholdHours: Long
 ) : FifoTieringPolicy {
 
     private val logger = LoggerFactory.getLogger(FifoTieringPolicyImpl::class.java)
@@ -37,12 +38,16 @@ class FifoTieringPolicyImpl(
         val countExceeded = stats.isCountExceeded(getHotMaxCount())
         val timeExceeded = stats.isTimeExceeded(getHotTimeThresholdHours())
 
+        logger.info("FIFO shouldMoveHotToWarm 검사: 메시지수=${stats.messageCount}, HOT최대=${getHotMaxCount()}, 개수초과=$countExceeded, 시간초과=$timeExceeded")
+
         return countExceeded || timeExceeded
     }
 
     override fun shouldMoveWarmToCold(stats: TierStats): Boolean {
         val countExceeded = stats.isCountExceeded(getWarmMaxCount())
         val timeExceeded = stats.isTimeExceeded(getWarmTimeThresholdHours())
+
+        logger.info("FIFO shouldMoveWarmToCold 검사: 메시지수=${stats.messageCount}, WARM최대=${getWarmMaxCount()}, 개수초과=$countExceeded, 시간초과=$timeExceeded")
 
         return countExceeded || timeExceeded
     }
@@ -56,6 +61,8 @@ class FifoTieringPolicyImpl(
             } ?: false
         } ?: false
 
+        logger.info("FIFO shouldSwapHotWarm 검사: HOT메시지수=${hotStats.messageCount}, WARM메시지수=${warmStats.messageCount}, HOT최대=${getHotMaxCount()}, HOT가득참=$hotFull, WARM에오래된메시지=$warmHasOlderMessages")
+
         return hotFull && warmHasOlderMessages
     }
 
@@ -65,14 +72,28 @@ class FifoTieringPolicyImpl(
         return if (stats.isCountExceeded(getHotMaxCount())) {
             // 개수 초과: 모든 파티션에서 최신 메시지들을 이관 (FIFO 순서 유지)
             val totalMoveCount = stats.messageCount - getHotMaxCount()
-            val moveCountPerPartition = totalMoveCount / partitionCount
+            val baseCountPerPartition = totalMoveCount / partitionCount
+            val remainderCount = totalMoveCount % partitionCount
 
-            logger.info("FIFO Hot→Warm 개수 초과 이관: 총 ${totalMoveCount}개, 파티션당 ${moveCountPerPartition}개")
+            logger.info("FIFO Hot→Warm 개수 초과 이관: 총 ${totalMoveCount}개, 기본 파티션당 ${baseCountPerPartition}개, 나머지 ${remainderCount}개")
 
+            // 파티션별로 메시지 수를 계산 (나머지는 첫 번째 파티션들에 분배)
             Flux.range(0, partitionCount)
                 .flatMap { partitionNumber ->
                     val hotKey = getHotKeyForPartition(queue, partitionNumber)
-                    getNewestMessages(hotKey, moveCountPerPartition)
+                    val moveCount = if (partitionNumber < remainderCount) {
+                        baseCountPerPartition + 1
+                    } else {
+                        baseCountPerPartition
+                    }
+
+                    if (moveCount > 0) {
+                        logger.info("파티션 ${partitionNumber}에서 ${moveCount}개 메시지 이동")
+                        getNewestMessages(hotKey, moveCount)
+                    } else {
+                        logger.info("파티션 ${partitionNumber}에서 이동할 메시지 없음")
+                        Flux.empty()
+                    }
                 }
         } else {
             // 시간 초과: 모든 파티션에서 오래된 메시지들을 이관
@@ -90,25 +111,23 @@ class FifoTieringPolicyImpl(
         logger.debug("FIFO Warm→Cold 이관 시작: ${queue.queueName}")
 
         return if (stats.isCountExceeded(getWarmMaxCount())) {
-            // 개수 초과: 모든 파티션에서 최신 메시지들을 이관
+            // 개수 초과: RocksDB WARM에서 오래된 메시지들을 가져옴
             val totalMoveCount = stats.messageCount - getWarmMaxCount()
-            val moveCountPerPartition = totalMoveCount / partitionCount
 
-            logger.info("FIFO Warm→Cold 개수 초과 이관: 총 ${totalMoveCount}개, 파티션당 ${moveCountPerPartition}개")
+            logger.info("FIFO Warm→Cold 개수 초과 이관: 총 ${totalMoveCount}개")
 
-            Flux.range(0, partitionCount)
-                .flatMap { partitionNumber ->
-                    val warmKey = getWarmKeyForPartition(queue, partitionNumber)
-                    getNewestMessages(warmKey, moveCountPerPartition)
+            // RocksDB에서 오래된 메시지들을 가져옴 (FIFO 순서 유지)
+            warmTierManagerService.getOldestMessages(queue.tenantId, queue.queueName, totalMoveCount.toInt())
+                .doOnNext { messageId ->
+                    logger.debug("WARM→COLD 이동 대상 메시지: $messageId")
                 }
         } else {
-            // 시간 초과: 모든 파티션에서 오래된 메시지들을 이관
+            // 시간 초과: RocksDB WARM에서 만료된 메시지들을 가져옴
             logger.info("FIFO Warm→Cold 시간 초과 이관")
 
-            Flux.range(0, partitionCount)
-                .flatMap { partitionNumber ->
-                    val warmKey = getWarmKeyForPartition(queue, partitionNumber)
-                    getExpiredMessages(warmKey, getWarmTimeThresholdHours())
+            warmTierManagerService.getExpiredMessages(queue.tenantId, queue.queueName, getWarmTimeThresholdHours())
+                .doOnNext { messageId ->
+                    logger.debug("WARM→COLD 시간 만료 메시지: $messageId")
                 }
         }
     }
@@ -117,41 +136,39 @@ class FifoTieringPolicyImpl(
         val startTime = System.currentTimeMillis()
         logger.debug("FIFO Hot-Warm 스왑 시작: ${queue.queueName}")
 
-        // Hot의 최신 메시지들과 Warm의 오래된 메시지들을 교환
+        // Hot(Redis)의 최신 메시지들과 Warm(RocksDB)의 오래된 메시지들을 교환
         val hotMoveCount = hotStats.messageCount - getHotMaxCount()
         val warmMoveCount = minOf(hotMoveCount, warmStats.messageCount)
 
-        // 파티션별로 스왑 수행
-        val hotMovePerPartition = hotMoveCount / partitionCount
-        val warmMovePerPartition = warmMoveCount / partitionCount
+        logger.info("FIFO 스왑: Hot(Redis)→Warm(RocksDB) ${hotMoveCount}개, Warm(RocksDB)→Hot(Redis) ${warmMoveCount}개")
 
-        logger.info("FIFO 스왑: Hot→Warm ${hotMoveCount}개(파티션당${hotMovePerPartition}), Warm→Hot ${warmMoveCount}개(파티션당${warmMovePerPartition})")
-
-        return Flux.range(0, partitionCount)
-            .flatMap { partitionNumber ->
-                val hotKey = getHotKeyForPartition(queue, partitionNumber)
-                val warmKey = getWarmKeyForPartition(queue, partitionNumber)
-
-                Mono.zip(
-                    getNewestMessages(hotKey, hotMovePerPartition).collectList(),
-                    getOldestMessages(warmKey, warmMovePerPartition).collectList()
-                ).flatMap { tuple ->
-                    val hotMessages = tuple.t1
-                    val warmMessages = tuple.t2
-                    performPartitionSwap(hotKey, warmKey, hotMessages, warmMessages)
-                        .then(Mono.fromCallable { Pair(hotMessages.size, warmMessages.size) })
-                }
+        return Mono.zip(
+            // Hot(Redis)에서 최신 메시지들을 가져와서 Warm(RocksDB)으로 이동
+            if (hotMoveCount > 0) {
+                getHotMessagesToMove(queue, hotMoveCount.toInt())
+                    .flatMap { messageIds ->
+                        moveMessagesFromHotToWarm(queue, messageIds)
+                    }
+            } else {
+                Mono.just(0)
+            },
+            // Warm(RocksDB)에서 오래된 메시지들을 가져와서 Hot(Redis)으로 이동
+            if (warmMoveCount > 0) {
+                warmTierManagerService.getOldestMessages(queue.tenantId, queue.queueName, warmMoveCount.toInt())
+                    .collectList()
+                    .flatMap { messageIds ->
+                        moveMessagesFromWarmToHot(queue, messageIds)
+                    }
+            } else {
+                Mono.just(0)
             }
-            .reduce(Pair(0, 0)) { acc, pair ->
-                Pair(acc.first + pair.first, acc.second + pair.second)
-            }
-            .map { totalCounts ->
-                SwapResult(
-                    hotToWarmCount = totalCounts.first.toLong(),
-                    warmToHotCount = totalCounts.second.toLong(),
-                    executionTimeMs = System.currentTimeMillis() - startTime
-                )
-            }
+        ).map { result ->
+            SwapResult(
+                hotToWarmCount = result.t1.toLong(),
+                warmToHotCount = result.t2.toLong(),
+                executionTimeMs = System.currentTimeMillis() - startTime
+            )
+        }
     }
 
     /**
@@ -162,41 +179,103 @@ class FifoTieringPolicyImpl(
     }
 
     /**
-     * 파티션별 Warm 키 생성
+     * Hot(Redis)에서 이동할 최신 메시지들 가져오기
      */
-    private fun getWarmKeyForPartition(queue: Queue, partitionNumber: Int): String {
-        return "warm:queue:${queue.tenantId}:${queue.queueName}_partition_${partitionNumber}"
+    private fun getHotMessagesToMove(queue: Queue, count: Int): Mono<List<String>> {
+        return Flux.range(0, partitionCount)
+            .flatMap { partitionNumber ->
+                val hotKey = getHotKeyForPartition(queue, partitionNumber)
+                val countPerPartition = count / partitionCount + if (partitionNumber < count % partitionCount) 1 else 0
+                if (countPerPartition > 0) {
+                    getNewestMessages(hotKey, countPerPartition.toLong())
+                } else {
+                    Flux.empty()
+                }
+            }
+            .collectList()
     }
 
     /**
-     * 파티션별 Hot-Warm 스왑 수행
+     * Hot(Redis) → Warm(RocksDB) 메시지 이동
      */
-    private fun performPartitionSwap(hotKey: String, warmKey: String, hotMessages: List<String>, warmMessages: List<String>): Mono<Void> {
-        val operations = mutableListOf<Mono<*>>()
+    private fun moveMessagesFromHotToWarm(queue: Queue, messageIds: List<String>): Mono<Int> {
+        if (messageIds.isEmpty()) {
+            return Mono.just(0)
+        }
 
-        // Hot 메시지들을 Warm으로 이동
-        hotMessages.forEach { messageId ->
-            operations.add(
+        return Flux.fromIterable(messageIds)
+            .flatMap { messageId ->
+                // RocksDB WARM으로 저장 (기존 moveMessageToWarm 메서드 사용)
+                warmTierManagerService.moveMessageToWarm(messageId, queue.tenantId, queue.queueName)
+                    .map { success -> if (success) 1 else 0 }
+                    .onErrorResume { error ->
+                        logger.error("Hot→Warm 이동 실패: messageId=$messageId", error)
+                        Mono.just(0)
+                    }
+            }
+            .reduce(0) { acc: Int, result: Int -> acc + result }
+    }
+
+    /**
+     * Warm(RocksDB) → Hot(Redis) 메시지 이동
+     */
+    private fun moveMessagesFromWarmToHot(queue: Queue, messageIds: List<String>): Mono<Int> {
+        if (messageIds.isEmpty()) {
+            return Mono.just(0)
+        }
+
+        return Flux.fromIterable(messageIds)
+            .flatMap { messageId ->
+                // 1. RocksDB에서 메시지 데이터 가져오기
+                warmTierManagerService.getMessageFromWarm(messageId)
+                    .cast(Message::class.java)
+                    .flatMap { message ->
+                        // 2. Redis HOT으로 저장
+                        saveMessageToHot(queue, message)
+                            .then(
+                                // 3. RocksDB에서 제거
+                                warmTierManagerService.deleteMessageFromWarm(messageId)
+                            )
+                            .then(
+                                // 4. 메시지 위치 정보 업데이트
+                                updateMessageTier(messageId, "HOT")
+                            )
+                            .then(Mono.just(1))
+                    }
+                    .onErrorResume { error ->
+                        logger.error("Warm→Hot 이동 실패: messageId=$messageId", error)
+                        Mono.just(0)
+                    }
+            }
+            .reduce(0) { acc: Int, result: Int -> acc + result }
+    }
+
+    /**
+     * Hot(Redis)에서 메시지 제거
+     */
+    private fun removeMessageFromHot(queue: Queue, messageId: String): Mono<Void> {
+        return Flux.range(0, partitionCount)
+            .flatMap { partitionNumber ->
+                val hotKey = getHotKeyForPartition(queue, partitionNumber)
                 redisTemplate.opsForList().remove(hotKey, 1, messageId)
-                    .then(redisTemplate.opsForList().rightPush(warmKey, messageId))
-                    .then(updateMessageTier(messageId, "WARM"))
-            )
-        }
+                    .cast(Long::class.java)
+            }
+            .then()
+    }
 
-        // Warm 메시지들을 Hot으로 이동
-        warmMessages.forEach { messageId ->
-            operations.add(
-                redisTemplate.opsForList().remove(warmKey, 1, messageId)
-                    .then(redisTemplate.opsForList().leftPush(hotKey, messageId))
-                    .then(updateMessageTier(messageId, "HOT"))
-            )
-        }
-
-        return if (operations.isNotEmpty()) {
-            Mono.`when`(operations)
-        } else {
-            Mono.empty()
-        }
+    /**
+     * Hot(Redis)에 메시지 저장
+     */
+    private fun saveMessageToHot(queue: Queue, message: Message): Mono<Void> {
+        val partitionNumber = message.messageId.hashCode() % partitionCount
+        val hotKey = getHotKeyForPartition(queue, partitionNumber)
+        
+        return redisTemplate.opsForValue()
+            .set("message:${message.messageId}", objectMapper.writeValueAsString(message))
+            .cast(Boolean::class.java)
+            .then(redisTemplate.opsForList().leftPush(hotKey, message.messageId))
+            .cast(Long::class.java)
+            .then()
     }
 
     /**
@@ -205,14 +284,6 @@ class FifoTieringPolicyImpl(
     private fun getNewestMessages(queueKey: String, count: Long): Flux<String> {
         return redisTemplate.opsForList()
             .range(queueKey, -count, -1)
-    }
-
-    /**
-     * 가장 오래된 메시지들 반환 (List의 시작부터)
-     */
-    private fun getOldestMessages(queueKey: String, count: Long): Flux<String> {
-        return redisTemplate.opsForList()
-            .range(queueKey, 0, count - 1)
     }
 
     /**
@@ -231,9 +302,6 @@ class FifoTieringPolicyImpl(
             }
     }
 
-    /**
-     * 실제 스왑 수행
-     */
     /**
      * 메시지 타이어 정보 업데이트
      */

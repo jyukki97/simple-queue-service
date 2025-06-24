@@ -77,7 +77,11 @@ class TieringScheduler(
                         logger.info("FIFO 스왑 완료: ${queue.queueName}, hotToWarm=${result.hotToWarmCount}, warmToHot=${result.warmToHotCount}")
                         // TODO: 메트릭 기록 추가
                     }
-                    .map { "FIFO 스왑 완료: ${queue.queueName}" }
+                    .flatMap {
+                        // 스왑 후 일반적인 계층화 이동 처리
+                        processTieringMoves(queue, hotStats, warmStats, coldStats, fifoTieringPolicy, "FIFO")
+                    }
+                    .map { "FIFO 스왑 및 계층화 완료: ${queue.queueName}" }
             } else {
                 processTieringMoves(queue, hotStats, warmStats, coldStats, fifoTieringPolicy, "FIFO")
             }

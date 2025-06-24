@@ -65,8 +65,8 @@ class QueueValidationService : BaseReactiveService() {
         ValidationRules.maxLength(queueName, 80, "queueName")
 
         // 큐 이름 형식 검증
-        if (!queueName.matches(Regex("^[a-zA-Z0-9_-]+$"))) {
-            throw IllegalArgumentException("queueName은 영숫자, 하이픈(-), 언더스코어(_)만 포함할 수 있습니다")
+        if (!queueName.matches(Regex("^[a-zA-Z0-9._-]+$"))) {
+            throw IllegalArgumentException("queueName은 영숫자, 하이픈(-), 언더스코어(_) 및 점(.)만 포함할 수 있습니다")
         }
 
         // FIFO 큐 이름 규칙 (선택사항)

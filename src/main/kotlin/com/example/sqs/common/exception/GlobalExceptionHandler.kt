@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice
 import org.springframework.web.server.MethodNotAllowedException
 import org.springframework.web.server.NotAcceptableStatusException
 import org.springframework.web.server.ResponseStatusException
+import org.springframework.web.server.ServerWebInputException
 import org.springframework.web.server.UnsupportedMediaTypeStatusException
 import reactor.core.publisher.Mono
 
@@ -160,5 +161,59 @@ class GlobalExceptionHandler {
     fun handleNotAcceptableException(ex: NotAcceptableStatusException): ApiResponse<Nothing> {
         log.error("Not acceptable: {}", ex.message)
         return ApiResponse.error("NOT_ACCEPTABLE", "Response format not acceptable")
+    }
+
+    @ExceptionHandler(ServerWebInputException::class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    fun handleServerWebInputException(ex: ServerWebInputException): ApiResponse<Nothing> {
+        log.error("Server web input exception: {}", ex.message)
+
+        // JSON 역직렬화 중 발생한 IllegalArgumentException 확인
+        var cause = ex.cause
+        while (cause != null) {
+            if (cause is IllegalArgumentException) {
+                log.error("Validation error during deserialization: {}", cause.message)
+                return ApiResponse.error("VALIDATION_ERROR", cause.message ?: "Validation failed")
+            }
+            cause = cause.cause
+        }
+
+        return ApiResponse.error("BAD_REQUEST", "Invalid request body")
+    }
+
+    @ExceptionHandler(org.springframework.core.codec.DecodingException::class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    fun handleDecodingException(ex: org.springframework.core.codec.DecodingException): ApiResponse<Nothing> {
+        log.error("Decoding exception: {}", ex.message)
+
+        // JSON 역직렬화 중 발생한 IllegalArgumentException 확인
+        var cause = ex.cause
+        while (cause != null) {
+            if (cause is IllegalArgumentException) {
+                log.error("Validation error during JSON decoding: {}", cause.message)
+                return ApiResponse.error("VALIDATION_ERROR", cause.message ?: "Validation failed")
+            }
+            cause = cause.cause
+        }
+
+        return ApiResponse.error("BAD_REQUEST", "Failed to decode request body")
+    }
+
+    @ExceptionHandler(com.fasterxml.jackson.databind.JsonMappingException::class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    fun handleJsonMappingException(ex: com.fasterxml.jackson.databind.JsonMappingException): ApiResponse<Nothing> {
+        log.error("JSON mapping exception: {}", ex.message)
+
+        // JSON 역직렬화 중 발생한 IllegalArgumentException 확인
+        var cause: Throwable? = ex.cause
+        while (cause != null) {
+            if (cause is IllegalArgumentException) {
+                log.error("Validation error during JSON mapping: {}", cause.message)
+                return ApiResponse.error("VALIDATION_ERROR", cause.message ?: "Validation failed")
+            }
+            cause = cause.cause
+        }
+
+        return ApiResponse.error("BAD_REQUEST", "Invalid JSON format")
     }
 }

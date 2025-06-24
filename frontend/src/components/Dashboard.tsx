@@ -58,7 +58,7 @@ const Dashboard: React.FC = () => {
   };
 
   const getStatusColor = (status: string): string => {
-    switch (status.toLowerCase()) {
+    switch (status?.toLowerCase()) {
       case 'healthy': return '#10B981';
       case 'warning': return '#F59E0B';
       case 'critical': return '#EF4444';
@@ -118,7 +118,7 @@ const Dashboard: React.FC = () => {
             </div>
             <div className="status-info">
               <h3>전체 시스템 상태</h3>
-              <p className="status-value">{systemStatus.overall.toUpperCase()}</p>
+              <p className="status-value">{systemStatus.overall?.toUpperCase()}</p>
             </div>
           </div>
 
@@ -126,7 +126,7 @@ const Dashboard: React.FC = () => {
             <div className="status-icon redis">💾</div>
             <div className="status-info">
               <h3>Redis 상태</h3>
-              <p className="status-value">{systemStatus.components.redis}</p>
+              <p className="status-value">{systemStatus.components?.redis}</p>
             </div>
           </div>
 
@@ -134,7 +134,7 @@ const Dashboard: React.FC = () => {
             <div className="status-icon storage">🗂️</div>
             <div className="status-info">
               <h3>스토리지 상태</h3>
-              <p className="status-value">{systemStatus.components.storage}</p>
+              <p className="status-value">{systemStatus.components?.storage}</p>
             </div>
           </div>
 
