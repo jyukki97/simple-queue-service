@@ -114,17 +114,6 @@ class WarmStorageController(
     }
 
     /**
-     * 디버그: RocksDB 키 개수 확인
-     */
-    @GetMapping("/debug/key-count")
-    fun debugKeyCount(): Mono<ApiResponse<Map<String, Int>>> {
-        return warmTierManager.debugKeyCount()
-            .map { stats ->
-                ApiResponse.success(stats, "RocksDB 키 개수 조회 성공")
-            }
-    }
-
-    /**
      * 디버그: 모든 메시지 정보 조회
      */
     @GetMapping("/debug/all-messages")

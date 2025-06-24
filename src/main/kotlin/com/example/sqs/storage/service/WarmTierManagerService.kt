@@ -155,13 +155,6 @@ class WarmTierManagerService(
     }
 
     /**
-     * 디버그: RocksDB 키 개수 확인
-     */
-    fun debugKeyCount(): Mono<Map<String, Int>> {
-        return rocksDBService.debugKeyCount()
-    }
-
-    /**
      * 디버그: 모든 메시지 정보 조회
      */
     fun debugAllMessages(): Mono<List<Map<String, Any>>> {
@@ -276,7 +269,7 @@ class WarmTierManagerService(
      */
     fun getOldestMessages(tenantId: String, queueName: String, count: Int): Flux<String> {
         logger.debug("WARM 계층에서 오래된 메시지 ${count}개 조회: ${tenantId}:${queueName}")
-        
+
         return rocksDBService.getOldestMessageIds(tenantId, queueName, count)
             .doOnNext { messageId ->
                 logger.debug("WARM 오래된 메시지: $messageId")
@@ -288,9 +281,9 @@ class WarmTierManagerService(
      */
     fun getExpiredMessages(tenantId: String, queueName: String, thresholdHours: Long): Flux<String> {
         logger.debug("WARM 계층에서 만료된 메시지 조회 (${thresholdHours}시간): ${tenantId}:${queueName}")
-        
+
         val cutoffTime = Instant.now().minusSeconds(thresholdHours * 3600)
-        
+
         return rocksDBService.getExpiredMessageIds(tenantId, queueName, cutoffTime)
             .doOnNext { messageId ->
                 logger.debug("WARM 만료된 메시지: $messageId")

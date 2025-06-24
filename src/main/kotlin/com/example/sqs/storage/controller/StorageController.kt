@@ -4,8 +4,8 @@ import com.example.sqs.auth.domain.AuthContext
 import com.example.sqs.queue.domain.Queue
 import com.example.sqs.queue.service.QueueService
 import com.example.sqs.storage.dto.*
-import com.example.sqs.storage.service.StorageStatsService
 import com.example.sqs.storage.scheduler.TieringScheduler
+import com.example.sqs.storage.service.StorageStatsService
 import org.springframework.web.bind.annotation.*
 import reactor.core.publisher.Mono
 
@@ -33,7 +33,7 @@ class StorageController(
                 ).map { tuple ->
                     QueueStorageStats(
                         queueName = queue.queueName,
-                        queueType = if (queue.attributes.fifoQueue == true) "FIFO" else "Standard",
+                        queueType = if (queue.attributes.fifoQueue) "FIFO" else "Standard",
                         hotStats = tuple.t1,
                         warmStats = tuple.t2,
                         coldStats = tuple.t3
@@ -78,7 +78,7 @@ class StorageController(
                 ).map { tuple ->
                     QueueStorageStats(
                         queueName = queue.queueName,
-                        queueType = if (queue.attributes.fifoQueue == true) "FIFO" else "Standard",
+                        queueType = if (queue.attributes.fifoQueue) "FIFO" else "Standard",
                         hotStats = tuple.t1,
                         warmStats = tuple.t2,
                         coldStats = tuple.t3

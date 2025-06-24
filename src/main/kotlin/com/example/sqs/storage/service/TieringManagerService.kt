@@ -53,15 +53,6 @@ class TieringManagerService(
     }
 
     /**
-     * 메시지 위치 추적
-     */
-    suspend fun trackMessageLocation(messageId: String, tier: StorageTier) {
-        // 임시 구현 - 실제로는 Redis나 데이터베이스에 저장해야 함
-        // 여기서는 로그만 출력
-        println("메시지 위치 추적: messageId=$messageId, tier=$tier")
-    }
-
-    /**
      * 메시지 위치 정보 조회
      */
     suspend fun getMessageLocation(messageId: String): MessageLocation {

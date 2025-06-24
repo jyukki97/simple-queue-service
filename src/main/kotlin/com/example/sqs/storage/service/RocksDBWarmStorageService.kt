@@ -5,6 +5,7 @@ import com.example.sqs.storage.domain.BatchResult
 import com.example.sqs.storage.domain.WarmStorageStats
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.rocksdb.RocksDB
+import org.rocksdb.WriteBatch
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import reactor.core.publisher.Flux
@@ -127,7 +128,7 @@ class RocksDBWarmStorageService(
 
             try {
                 // WriteBatch 사용으로 성능 최적화
-                val writeBatch = org.rocksdb.WriteBatch()
+                val writeBatch = WriteBatch()
                 val expiryTime = Instant.now().plusSeconds(ttlHours * 3600).epochSecond
 
                 messages.forEach { message ->
@@ -218,11 +219,11 @@ class RocksDBWarmStorageService(
                                 // FIFO 큐: test-queue.fifo -> test-queue.fifo_partition_X
                                 // Standard 큐: test-queue -> test-queue_partition_X
                                 val isMatchingQueue = message.tenantId == tenantId &&
-                                    (message.queueName == queueName ||
-                                     message.queueName.startsWith("${queueName}_partition_") ||
-                                     message.queueName.startsWith("${queueName.removeSuffix(".fifo")}_partition_") ||
-                                     (queueName.endsWith(".fifo") && message.queueName.startsWith("${queueName}_partition_")))
-                                
+                                        (message.queueName == queueName ||
+                                                message.queueName.startsWith("${queueName}_partition_") ||
+                                                message.queueName.startsWith("${queueName.removeSuffix(".fifo")}_partition_") ||
+                                                (queueName.endsWith(".fifo") && message.queueName.startsWith("${queueName}_partition_")))
+
                                 if (isMatchingQueue) {
                                     // 오프셋 처리
                                     if (matchedCount >= offset) {
@@ -307,39 +308,6 @@ class RocksDBWarmStorageService(
     private fun isExpired(messageId: String): Boolean {
         val expiryTime = ttlIndex[messageId] ?: return false
         return expiryTime <= Instant.now().epochSecond
-    }
-
-    /**
-     * 디버그: 실제 RocksDB 키 개수 확인
-     */
-    fun debugKeyCount(): Mono<Map<String, Int>> {
-        return Mono.fromCallable {
-            try {
-                val iterator = rocksDB.newIterator()
-                var messageCount = 0
-                var ttlCount = 0
-
-                iterator.seekToFirst()
-                while (iterator.isValid()) {
-                    val key = String(iterator.key())
-                    when {
-                        key.startsWith(MESSAGE_PREFIX) -> messageCount++
-                        key.startsWith(TTL_PREFIX) -> ttlCount++
-                    }
-                    iterator.next()
-                }
-                iterator.close()
-
-                mapOf(
-                    "actualMessageKeys" to messageCount,
-                    "actualTtlKeys" to ttlCount,
-                    "ttlIndexSize" to ttlIndex.size
-                )
-            } catch (e: Exception) {
-                logger.error("디버그 키 카운트 실패", e)
-                emptyMap()
-            }
-        }.subscribeOn(Schedulers.boundedElastic())
     }
 
     /**
@@ -465,29 +433,29 @@ class RocksDBWarmStorageService(
         return Mono.fromCallable {
             try {
                 val messageIds = mutableListOf<Pair<String, Long>>()
-                
+
                 val iterator = rocksDB.newIterator()
                 iterator.use { iter ->
                     iter.seekToFirst()
-                    
+
                     while (iter.isValid()) {
                         val key = iter.key().toString(Charsets.UTF_8)
-                        
+
                         // MESSAGE_PREFIX로 시작하는 키만 처리
                         if (key.startsWith(MESSAGE_PREFIX)) {
                             try {
                                 val messageJson = iter.value().toString(Charsets.UTF_8)
                                 val message = objectMapper.readValue(messageJson, Message::class.java)
-                                
+
                                 // 해당 큐의 메시지인지 확인 (파티션 고려)
                                 // FIFO 큐: test-queue.fifo -> test-queue.fifo_partition_X
                                 // Standard 큐: test-queue -> test-queue_partition_X
-                                val isMatchingQueue = message.tenantId == tenantId && 
-                                    (message.queueName == queueName || 
-                                     message.queueName.startsWith("${queueName}_partition_") ||
-                                     message.queueName.startsWith("${queueName.removeSuffix(".fifo")}_partition_") ||
-                                     (queueName.endsWith(".fifo") && message.queueName.startsWith("${queueName}_partition_")))
-                                
+                                val isMatchingQueue = message.tenantId == tenantId &&
+                                        (message.queueName == queueName ||
+                                                message.queueName.startsWith("${queueName}_partition_") ||
+                                                message.queueName.startsWith("${queueName.removeSuffix(".fifo")}_partition_") ||
+                                                (queueName.endsWith(".fifo") && message.queueName.startsWith("${queueName}_partition_")))
+
                                 if (isMatchingQueue) {
                                     val messageId = key.removePrefix(MESSAGE_PREFIX)
                                     messageIds.add(messageId to message.sentTimestamp.epochSecond)
@@ -496,25 +464,25 @@ class RocksDBWarmStorageService(
                                 logger.warn("메시지 파싱 실패: $key", e)
                             }
                         }
-                        
+
                         iter.next()
                     }
                 }
-                
+
                 logger.info("큐 ${tenantId}:${queueName}에서 ${messageIds.size}개 메시지 발견, ${count}개 선택")
-                
+
                 // 오래된 순서로 정렬하여 count개만 반환
                 messageIds.sortedBy { it.second }
                     .take(count)
                     .map { it.first }
-                    
+
             } catch (e: Exception) {
                 logger.error("오래된 메시지 조회 실패: ${tenantId}:${queueName}", e)
                 emptyList<String>()
             }
         }
-        .subscribeOn(Schedulers.boundedElastic())
-        .flatMapIterable { messageIdList -> messageIdList }
+            .subscribeOn(Schedulers.boundedElastic())
+            .flatMapIterable { messageIdList -> messageIdList }
     }
 
     /**
@@ -524,29 +492,29 @@ class RocksDBWarmStorageService(
         return Mono.fromCallable {
             try {
                 val expiredIds = mutableListOf<String>()
-                
+
                 val iterator = rocksDB.newIterator()
                 iterator.use { iter ->
                     iter.seekToFirst()
-                    
+
                     while (iter.isValid()) {
                         val key = iter.key().toString(Charsets.UTF_8)
-                        
+
                         // MESSAGE_PREFIX로 시작하는 키만 처리
                         if (key.startsWith(MESSAGE_PREFIX)) {
                             try {
                                 val messageJson = iter.value().toString(Charsets.UTF_8)
                                 val message = objectMapper.readValue(messageJson, Message::class.java)
-                                
+
                                 // 해당 큐의 메시지이고 만료된 메시지인지 확인
                                 // FIFO 큐: test-queue.fifo -> test-queue.fifo_partition_X
                                 // Standard 큐: test-queue -> test-queue_partition_X
-                                val isMatchingQueue = message.tenantId == tenantId && 
-                                    (message.queueName == queueName || 
-                                     message.queueName.startsWith("${queueName}_partition_") ||
-                                     message.queueName.startsWith("${queueName.removeSuffix(".fifo")}_partition_") ||
-                                     (queueName.endsWith(".fifo") && message.queueName.startsWith("${queueName}_partition_")))
-                                
+                                val isMatchingQueue = message.tenantId == tenantId &&
+                                        (message.queueName == queueName ||
+                                                message.queueName.startsWith("${queueName}_partition_") ||
+                                                message.queueName.startsWith("${queueName.removeSuffix(".fifo")}_partition_") ||
+                                                (queueName.endsWith(".fifo") && message.queueName.startsWith("${queueName}_partition_")))
+
                                 if (isMatchingQueue && message.sentTimestamp.isBefore(cutoffTime)) {
                                     val messageId = key.removePrefix(MESSAGE_PREFIX)
                                     expiredIds.add(messageId)
@@ -555,21 +523,21 @@ class RocksDBWarmStorageService(
                                 logger.warn("메시지 파싱 실패: $key", e)
                             }
                         }
-                        
+
                         iter.next()
                     }
                 }
-                
+
                 logger.info("큐 ${tenantId}:${queueName}에서 ${expiredIds.size}개 만료된 메시지 발견")
                 expiredIds
-                
+
             } catch (e: Exception) {
                 logger.error("만료된 메시지 조회 실패: ${tenantId}:${queueName}", e)
                 emptyList<String>()
             }
         }
-        .subscribeOn(Schedulers.boundedElastic())
-        .flatMapIterable { expiredIdList -> expiredIdList }
+            .subscribeOn(Schedulers.boundedElastic())
+            .flatMapIterable { expiredIdList -> expiredIdList }
     }
 
     /**
@@ -605,11 +573,11 @@ class RocksDBWarmStorageService(
                             // FIFO 큐: test-queue.fifo -> test-queue.fifo_partition_X
                             // Standard 큐: test-queue -> test-queue_partition_X
                             val isMatchingQueue = message.tenantId == tenantId &&
-                                (message.queueName == queueName ||
-                                 message.queueName.startsWith("${queueName}_partition_") ||
-                                 message.queueName.startsWith("${queueName.removeSuffix(".fifo")}_partition_") ||
-                                 (queueName.endsWith(".fifo") && message.queueName.startsWith("${queueName}_partition_")))
-                            
+                                    (message.queueName == queueName ||
+                                            message.queueName.startsWith("${queueName}_partition_") ||
+                                            message.queueName.startsWith("${queueName.removeSuffix(".fifo")}_partition_") ||
+                                            (queueName.endsWith(".fifo") && message.queueName.startsWith("${queueName}_partition_")))
+
                             if (isMatchingQueue) {
 
                                 keysToDelete.add(key)
@@ -645,6 +613,111 @@ class RocksDBWarmStorageService(
 
             deletedCount
         }.subscribeOn(Schedulers.boundedElastic())
+    }
+
+    /**
+     * 특정 큐의 메시지 개수 조회
+     */
+    fun getMessageCountByQueue(tenantId: String, queueName: String): Int {
+        return try {
+            val iterator = rocksDB.newIterator()
+            iterator.seekToFirst()
+
+            var count = 0
+            while (iterator.isValid()) {
+                val key = String(iterator.key())
+
+                if (key.startsWith(MESSAGE_PREFIX)) {
+                    val messageId = key.removePrefix(MESSAGE_PREFIX)
+                    val messageBytes = iterator.value()
+
+                    if (messageBytes != null) {
+                        try {
+                            val messageJson = String(messageBytes)
+                            val messageData = objectMapper.readTree(messageJson)
+
+                            val msgTenantId = messageData.get("tenantId")?.asText()
+                            val msgQueueName = messageData.get("queueName")?.asText()
+
+                            // 큐 이름 매칭 (파티션 포함)
+                            if (msgTenantId == tenantId &&
+                                (msgQueueName == queueName || msgQueueName?.startsWith("${queueName}_partition_") == true)
+                            ) {
+                                count++
+                            }
+                        } catch (e: Exception) {
+                            logger.warn("메시지 파싱 중 오류: $messageId", e)
+                        }
+                    }
+                }
+
+                iterator.next()
+            }
+
+            iterator.close()
+            count
+        } catch (e: Exception) {
+            logger.error("큐 메시지 개수 조회 실패: ${tenantId}:${queueName}", e)
+            0
+        }
+    }
+
+    /**
+     * 특정 큐의 가장 오래된 메시지 시간 조회
+     */
+    fun getOldestMessageTime(tenantId: String, queueName: String): Instant? {
+        return try {
+            val iterator = rocksDB.newIterator()
+            iterator.seekToFirst()
+
+            var oldestTime: Instant? = null
+
+            while (iterator.isValid()) {
+                val key = String(iterator.key())
+
+                if (key.startsWith(MESSAGE_PREFIX)) {
+                    val messageId = key.removePrefix(MESSAGE_PREFIX)
+                    val messageBytes = iterator.value()
+
+                    if (messageBytes != null) {
+                        try {
+                            val messageJson = String(messageBytes)
+                            val messageData = objectMapper.readTree(messageJson)
+
+                            val msgTenantId = messageData.get("tenantId")?.asText()
+                            val msgQueueName = messageData.get("queueName")?.asText()
+
+                            // 큐 이름 매칭 (파티션 포함)
+                            if (msgTenantId == tenantId &&
+                                (msgQueueName == queueName || msgQueueName?.startsWith("${queueName}_partition_") == true)
+                            ) {
+
+                                val sentTimestampNode = messageData.get("sentTimestamp")
+                                val sentTime = if (sentTimestampNode?.isTextual == true) {
+                                    Instant.parse(sentTimestampNode.asText())
+                                } else {
+                                    Instant.ofEpochMilli((sentTimestampNode?.asDouble()?.times(1000))?.toLong() ?: 0L)
+                                }
+
+                                if (oldestTime == null || sentTime.isBefore(oldestTime)) {
+                                    oldestTime = sentTime
+                                }
+                            }
+                        } catch (e: Exception) {
+                            logger.warn("메시지 파싱 중 오류: $messageId", e)
+                        }
+                    }
+                }
+
+                iterator.next()
+            }
+
+            iterator.close()
+            oldestTime
+        } catch (e: Exception) {
+            logger.error("가장 오래된 메시지 시간 조회 실패: ${tenantId}:${queueName}", e)
+            null
+        }
     }
 }
 

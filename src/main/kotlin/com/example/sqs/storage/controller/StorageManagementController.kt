@@ -2,9 +2,13 @@ package com.example.sqs.storage.controller
 
 import com.example.sqs.common.domain.ApiResponse
 import com.example.sqs.storage.domain.*
-import com.example.sqs.storage.service.*
-import com.example.sqs.storage.dto.*
+import com.example.sqs.storage.dto.BatchMigrationRequest
+import com.example.sqs.storage.dto.MessageLocationResponse
+import com.example.sqs.storage.dto.PromotionHintRequest
+import com.example.sqs.storage.dto.PromotionRequest
 import com.example.sqs.storage.scheduler.TieringScheduler
+import com.example.sqs.storage.service.TieringManagerService
+import com.example.sqs.storage.service.UnifiedStorageService
 import org.springframework.web.bind.annotation.*
 
 /**
@@ -48,7 +52,7 @@ class StorageManagementController(
     @GetMapping("/messages/{messageId}/location")
     suspend fun getMessageLocationAdmin(@PathVariable messageId: String): ApiResponse<MessageLocationResponse?> {
         val location = tieringManager.getMessageLocation(messageId)
-        return ApiResponse.success(location?.let {
+        return ApiResponse.success(location.let {
             MessageLocationResponse(
                 messageId = messageId,
                 currentTier = it.tier.name,

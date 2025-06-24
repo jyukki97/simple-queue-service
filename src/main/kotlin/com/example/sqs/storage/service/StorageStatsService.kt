@@ -10,7 +10,7 @@ import com.example.sqs.storage.domain.StorageTier
 import com.example.sqs.storage.domain.TierStats
 import com.example.sqs.storage.dto.PromoteResult
 import com.example.sqs.storage.dto.TierMessageInfo
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.example.sqs.storage.service.impl.ColdStorageService
 import kotlinx.coroutines.reactor.mono
 import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Lazy
@@ -24,10 +24,9 @@ import java.time.Instant
 class StorageStatsService(
     private val redisTemplate: ReactiveRedisTemplate<String, String>,
     private val partitioningService: QueuePartitioningService,
-    private val objectMapper: ObjectMapper,
     private val warmTierManagerService: WarmTierManagerService,
     private val redisKeyManager: RedisKeyManager,
-    @Lazy private val coldStorageService: com.example.sqs.storage.service.impl.ColdStorageService
+    @Lazy private val coldStorageService: ColdStorageService
 ) {
 
     private val logger = LoggerFactory.getLogger(StorageStatsService::class.java)
@@ -99,175 +98,6 @@ class StorageStatsService(
                     totalSizeBytes = 0
                 )
             )
-    }
-
-    /**
-     * 메시지를 한 계층에서 다른 계층으로 이관 (모든 큐 타입에서 파티션 사용)
-     */
-    fun moveMessage(messageId: String, fromTier: String, toTier: String, queue: Queue): Mono<Void> {
-        return moveMessageInPartitionedQueue(messageId, fromTier, toTier, queue)
-    }
-
-    /**
-     * 파티션된 큐에서 메시지 이관 (FIFO와 Standard 모두 지원)
-     */
-    private fun moveMessageInPartitionedQueue(messageId: String, fromTier: String, toTier: String, queue: Queue): Mono<Void> {
-        return if (fromTier == "WARM" && toTier == "COLD") {
-            // WARM→COLD 이동: RocksDB에서 직접 처리
-            moveWarmToCold(messageId, queue)
-        } else if (queue.attributes.fifoQueue) {
-            // FIFO 큐인 경우: MessageGroupId 기반으로 정확한 파티션 계산
-            moveMessageInFifoQueue(messageId, fromTier, toTier, queue)
-        } else {
-            // Standard 큐인 경우: 모든 파티션 검색
-            moveMessageInStandardQueue(messageId, fromTier, toTier, queue)
-        }
-    }
-
-    /**
-     * WARM→COLD 메시지 이동 (RocksDB → 파일시스템)
-     */
-    private fun moveWarmToCold(messageId: String, queue: Queue): Mono<Void> {
-        return warmTierManagerService.getMessageFromWarm(messageId)
-            .cast(Message::class.java)
-            .flatMap { message ->
-                // COLD 저장소에 저장 - mono {} 블록 사용으로 runBlocking 완전 제거
-                mono {
-                    coldStorageService.saveMessage(message)
-                }
-                    .onErrorResume { error ->
-                        logger.error("COLD 저장 중 예외 발생: $messageId", error)
-                        Mono.error(RuntimeException("Failed to save message to COLD storage: $messageId", error))
-                    }
-                    .flatMap { success ->
-                        if (success) {
-                            warmTierManagerService.deleteMessageFromWarm(messageId)
-                                .then(updateMessageTier(messageId, "COLD"))
-                        } else {
-                            logger.error("COLD 저장 실패 (false 반환): messageId=$messageId")
-                            Mono.error(RuntimeException("Failed to save message to COLD storage: $messageId"))
-                        }
-                    }
-            }
-            .doOnError { error ->
-                logger.error("메시지 WARM→COLD 이동 실패: $messageId", error)
-            }
-    }
-
-    /**
-     * FIFO 큐에서 메시지 이관 - MessageGroupId 기반 파티션 유지
-     */
-    private fun moveMessageInFifoQueue(messageId: String, fromTier: String, toTier: String, queue: Queue): Mono<Void> {
-        // 메시지에서 MessageGroupId 추출
-        return getMessageDetails(messageId)
-            .flatMap { message ->
-                val messageGroupId = message.messageGroupId
-                if (messageGroupId.isNullOrBlank()) {
-                    Mono.error(IllegalStateException("FIFO 메시지에서 MessageGroupId를 찾을 수 없습니다: $messageId"))
-                } else {
-                    // MessageGroupId 기반으로 파티션 계산
-                    val partitionNumber = partitioningService.getPartitionNumber(messageGroupId, 4)
-                    val partitionedQueueName = partitioningService.getPartitionedQueueName(queue.queueName, partitionNumber)
-
-                    val tierPrefix = fromTier.lowercase()
-                    val fromKey = "${tierPrefix}:queue:${queue.tenantId}:${partitionedQueueName}"
-                    val toTierPrefix = toTier.lowercase()
-                    val toKey = "${toTierPrefix}:queue:${queue.tenantId}:${partitionedQueueName}"
-
-                    moveMessageBetweenKeys(messageId, fromKey, toKey, toTier)
-                }
-            }
-    }
-
-    /**
-     * Standard 큐에서 메시지 이관 - 모든 파티션 검색
-     */
-    private fun moveMessageInStandardQueue(messageId: String, fromTier: String, toTier: String, queue: Queue): Mono<Void> {
-        val partitionCount = 4 // 설정에서 가져와야 함
-        val tierPrefix = fromTier.lowercase()
-
-        // 모든 파티션에서 메시지를 찾아서 이관
-        return Flux.range(0, partitionCount)
-            .flatMap { partitionNumber ->
-                val partitionedQueueName = partitioningService.getPartitionedQueueName(queue.queueName, partitionNumber)
-                val fromKey = "${tierPrefix}:queue:${queue.tenantId}:${partitionedQueueName}"
-
-                // 해당 파티션에 메시지가 있는지 확인
-                redisTemplate.opsForList()
-                    .range(fromKey, 0, -1)
-                    .any { it == messageId }
-                    .flatMap { hasMessage ->
-                        if (hasMessage) {
-                            val toTierPrefix = toTier.lowercase()
-                            val toKey = "${toTierPrefix}:queue:${queue.tenantId}:${partitionedQueueName}"
-                            moveMessageBetweenKeys(messageId, fromKey, toKey, toTier)
-                        } else {
-                            Mono.empty()
-                        }
-                    }
-            }
-            .next()
-            .then()
-    }
-
-    /**
-     * 키 간 메시지 이관
-     */
-    private fun moveMessageBetweenKeys(messageId: String, fromKey: String, toKey: String, toTier: String): Mono<Void> {
-        return when (toTier) {
-            "COLD" -> {
-                // COLD 티어로 이동하는 경우: 실제 메시지 객체를 가져와서 파일 시스템에 저장
-                val messageSource = if (fromKey.contains("warm:")) {
-                    // WARM에서 COLD로 이동: RocksDB에서 메시지 조회
-                    warmTierManagerService.getMessageFromWarm(messageId)
-                        .cast(Message::class.java)
-                } else {
-                    // HOT에서 COLD로 이동: Redis에서 메시지 조회
-                    getMessageDetails(messageId)
-                }
-
-                messageSource
-                    .flatMap { message ->
-                        // ColdStorageService를 사용하여 파일 시스템에 저장 - mono {} 사용
-                        mono {
-                            coldStorageService.saveMessage(message)
-                        }
-                            .flatMap { success ->
-                                if (success) {
-                                    // COLD 저장 성공 시, 기존 위치에서 메시지 제거
-                                    if (fromKey.contains("warm:")) {
-                                        // WARM에서 제거: RocksDB에서 삭제
-                                        warmTierManagerService.deleteMessageFromWarm(messageId)
-                                            .then(updateMessageTier(messageId, toTier))
-                                    } else {
-                                        // HOT에서 제거: Redis에서 삭제
-                                        redisTemplate.opsForList()
-                                            .remove(fromKey, 1, messageId)
-                                            .then(updateMessageTier(messageId, toTier))
-                                    }
-                                } else {
-                                    Mono.error(RuntimeException("Failed to save message to COLD storage: $messageId"))
-                                }
-                            }
-                    }
-            }
-
-            else -> {
-                // HOT/WARM 티어 간 이동: 기존 Redis 기반 로직 사용
-                redisTemplate.opsForList()
-                    .remove(fromKey, 1, messageId)
-                    .flatMap {
-                        when (toTier) {
-                            "HOT" -> redisTemplate.opsForList().leftPush(toKey, messageId)
-                            else -> redisTemplate.opsForList().rightPush(toKey, messageId)
-                        }
-                    }
-                    .then(updateMessageTier(messageId, toTier))
-            }
-        }
-            .doOnSuccess {
-                logger.debug("메시지 이관 완료: messageId=$messageId, $fromKey → $toKey ($toTier)")
-            }
     }
 
     /**
@@ -618,26 +448,6 @@ class StorageStatsService(
         return redisTemplate.opsForHash<String, String>()
             .putAll(redisKeyManager.getMessageLocationKey(messageId), updateData)
             .onErrorReturn(false)
-    }
-
-    /**
-     * 메시지 위치 정보 제거
-     */
-    fun removeMessageLocation(messageId: String): Mono<Boolean> {
-        return redisTemplate.delete(redisKeyManager.getMessageLocationKey(messageId))
-            .map { it > 0 }
-            .onErrorReturn(false)
-    }
-
-    /**
-     * 메시지 전체 정보를 Message 객체로 조회
-     */
-    private fun getMessageDetails(messageId: String): Mono<Message> {
-        return redisTemplate.opsForValue()
-            .get(redisKeyManager.getMessageKey(messageId))
-            .map { messageJson ->
-                objectMapper.readValue(messageJson, Message::class.java)
-            }
     }
 
     /**

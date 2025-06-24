@@ -1,11 +1,13 @@
 package com.example.sqs.storage.service
 
+import com.example.sqs.common.redis.RedisKeyManager
 import com.example.sqs.message.domain.Message
-import com.example.sqs.storage.domain.StorageTier
-import com.example.sqs.storage.domain.BatchResult
-import com.example.sqs.storage.service.StorageUsageInfo
-import com.example.sqs.storage.service.impl.*
 import com.example.sqs.performance.partitioning.QueuePartitioningService
+import com.example.sqs.storage.domain.BatchResult
+import com.example.sqs.storage.domain.StorageTier
+import com.example.sqs.storage.service.impl.ColdStorageService
+import com.example.sqs.storage.service.impl.HotStorageService
+import com.example.sqs.storage.service.impl.WarmStorageService
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
@@ -23,37 +25,40 @@ class StorageServiceTest {
 
     @Mock
     private lateinit var redisTemplate: ReactiveRedisTemplate<String, String>
-    
+
     @Mock
     private lateinit var objectMapper: ObjectMapper
-    
+
+    @Mock
+    private lateinit var redisKeyManager: RedisKeyManager
+
     @Mock
     private lateinit var partitioningService: QueuePartitioningService
-    
+
     @Mock
     private lateinit var warmTierManagerService: WarmTierManagerService
-    
+
     @Test
     fun `핫 스토리지 서비스 생성 테스트`() {
-        val hotStorage = HotStorageService(redisTemplate, objectMapper)
-        
+        val hotStorage = HotStorageService(redisTemplate, objectMapper, redisKeyManager)
+
         assertEquals(StorageTier.HOT, hotStorage.tier)
     }
-    
+
     @Test
     fun `웜 스토리지 서비스 생성 테스트`() {
         val warmStorage = WarmStorageService(redisTemplate, objectMapper)
-        
+
         assertEquals(StorageTier.WARM, warmStorage.tier)
     }
-    
+
     @Test
     fun `콜드 스토리지 서비스 생성 테스트`() {
         val coldStorage = ColdStorageService(objectMapper, "/tmp/test-cold-storage")
-        
+
         assertEquals(StorageTier.COLD, coldStorage.tier)
     }
-    
+
     @Test
     fun `메시지 도메인 생성 테스트`() {
         val message = Message(
@@ -64,30 +69,28 @@ class StorageServiceTest {
             sentTimestamp = Instant.now(),
             visibleAt = Instant.now()
         )
-        
+
         assertNotNull(message)
         assertEquals("test-message-1", message.messageId)
         assertEquals("test-tenant", message.tenantId)
         assertEquals("test-queue", message.queueName)
     }
-    
+
     @Test
-    fun `통합 스토리지 서비스 생성 테스트`() = runBlocking {
-        val hotStorage = HotStorageService(redisTemplate, objectMapper)
+    fun `통합 스토리지 서비스 생성 테스트`(): Unit = runBlocking {
+        val hotStorage = HotStorageService(redisTemplate, objectMapper, redisKeyManager)
         val warmStorage = WarmStorageService(redisTemplate, objectMapper)
         val coldStorage = ColdStorageService(objectMapper, "/tmp/test-cold-storage")
-        val storageStatsService = StorageStatsService(
-            redisTemplate, partitioningService, objectMapper, warmTierManagerService, coldStorage
-        )
+        val storageStatsService = StorageStatsService(redisTemplate, partitioningService, warmTierManagerService, redisKeyManager, coldStorage)
         val tieringManager = TieringManagerService(storageStatsService)
-        
+
         val unifiedStorage = UnifiedStorageService(
             hotStorage, warmStorage, coldStorage, tieringManager
         )
-        
+
         assertNotNull(unifiedStorage)
     }
-    
+
     @Test
     fun `배치 결과 생성 테스트`() {
         val result = BatchResult(
@@ -95,12 +98,12 @@ class StorageServiceTest {
             failCount = 2,
             errors = listOf("Error 1", "Error 2")
         )
-        
+
         assertEquals(5, result.successCount)
         assertEquals(2, result.failCount)
         assertEquals(2, result.errors.size)
     }
-    
+
     @Test
     fun `스토리지 사용량 정보 생성 테스트`() {
         val usageInfo = StorageUsageInfo(
@@ -111,7 +114,7 @@ class StorageServiceTest {
             usagePercent = 50.0,
             messageCount = 100
         )
-        
+
         assertEquals(StorageTier.HOT, usageInfo.tier)
         assertEquals(50.0, usageInfo.usagePercent)
         assertTrue(usageInfo.messageCount > 0)

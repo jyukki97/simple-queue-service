@@ -5,6 +5,7 @@ import com.example.sqs.config.QueueProperties
 import com.example.sqs.performance.compression.MessageCompressionService
 import com.example.sqs.performance.partitioning.QueuePartitioningService
 import org.springframework.stereotype.Service
+import kotlin.math.abs
 
 /**
  * 메시지 처리 유틸리티 기능을 담당하는 서비스
@@ -57,14 +58,14 @@ class MessageProcessingService(
      * FIFO 큐에 대한 파티션 번호 계산
      */
     fun calculateFifoPartition(messageGroupId: String, partitionCount: Int = 4): Int {
-        return Math.abs(messageGroupId.hashCode()) % partitionCount
+        return abs(messageGroupId.hashCode()) % partitionCount
     }
 
     /**
      * 표준 큐에 대한 파티션 번호 계산
      */
     fun calculateStandardPartition(messageContent: String, partitionCount: Int = 4): Int {
-        return Math.abs(messageContent.hashCode()) % partitionCount
+        return abs(messageContent.hashCode()) % partitionCount
     }
 
     /**

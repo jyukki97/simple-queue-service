@@ -284,15 +284,6 @@ class HotStorageService(
         }
     }
 
-    private fun parseMemoryInfo(info: String, key: String): Long {
-        return try {
-            val line = info.lines().find { it.startsWith(key) }
-            line?.substring(key.length)?.toLongOrNull() ?: 0L
-        } catch (e: Exception) {
-            0L
-        }
-    }
-
     private suspend fun updateMetrics(messageCountDelta: Int, errorCountDelta: Int) {
         try {
             val currentMetrics = getMetrics()

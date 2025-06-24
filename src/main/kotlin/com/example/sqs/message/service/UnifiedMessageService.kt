@@ -223,7 +223,7 @@ class UnifiedMessageService(
      * 파티션 결정 로직 (통합)
      */
     private fun determinePartition(queue: Queue, message: Message): Int {
-        return if (queue.attributes.fifoQueue == true) {
+        return if (queue.attributes.fifoQueue) {
             // FIFO: MessageGroupId 필수 (Message 객체에서 직접 가져오거나 attributes에서)
             val messageGroupId = message.messageGroupId
                 ?: message.attributes["MessageGroupId"]

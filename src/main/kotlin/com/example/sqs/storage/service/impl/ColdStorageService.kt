@@ -122,8 +122,9 @@ class ColdStorageService(
                                             logger.info("COLD 모든 메시지가 중복이라 스킵 - $archiveFile")
                                         }
 
-                                        existingMessages                                        } catch (e: Exception) {
-                                            // 기존 파일이 손상된 경우 새로 생성
+                                        existingMessages
+                                    } catch (e: Exception) {
+                                        // 기존 파일이 손상된 경우 새로 생성
                                         actualNewMessageCount = queueMessages.size
                                         queueMessages
                                     }
@@ -405,12 +406,6 @@ class ColdStorageService(
         }
     }
 
-    private fun getMessagePath(message: Message): Path {
-        val date = LocalDate.ofInstant(message.sentTimestamp, java.time.ZoneId.systemDefault())
-        val dateStr = date.format(DATE_FORMATTER)
-        return Paths.get(basePath, dateStr, message.tenantId, message.queueName, "${message.messageId}$MESSAGE_FILE_EXTENSION")
-    }
-
     private fun getArchivePath(date: LocalDate): Path {
         val dateStr = date.format(DATE_FORMATTER)
         return Paths.get(basePath, "archives", dateStr)
@@ -652,5 +647,97 @@ class ColdStorageService(
         )
     }
 
-    // ...existing code...
+    /**
+     * 특정 큐의 메시지 수를 조회 (파티션 포함)
+     */
+    fun getMessageCountByQueue(tenantId: String, queueName: String): Int {
+        return try {
+            val queueNameWithoutPartition = queueName.split("_partition_")[0]
+            val seenMessageIds = mutableSetOf<String>() // 중복 메시지 방지
+
+            Files.walk(Paths.get(basePath))
+                .filter { Files.isRegularFile(it) && it.toString().endsWith(MESSAGE_FILE_EXTENSION) }
+                .filter { path ->
+                    // 경로나 파일명에서 큐 이름이 포함되어 있는지 확인
+                    val pathStr = path.toString()
+                    val fileName = path.fileName.toString()
+                    pathStr.contains("/$queueNameWithoutPartition/") ||
+                            pathStr.contains("/${queueNameWithoutPartition}_partition_") ||
+                            pathStr.contains("$queueNameWithoutPartition-batch-") ||
+                            fileName.startsWith("${tenantId}_$queueNameWithoutPartition") || // 콜론이 언더스코어로 치환된 경우
+                            fileName.startsWith("$tenantId:$queueNameWithoutPartition") // 기존 콜론 포함 경우
+                }
+                .forEach { file ->
+                    try {
+                        val fileMessages = readMessagesFromFile(file)
+                        fileMessages.forEach { message ->
+                            // 중복 메시지 체크 및 큐 이름 매칭
+                            if (!seenMessageIds.contains(message.messageId) &&
+                                (message.queueName == queueName ||
+                                        message.queueName.startsWith("${queueNameWithoutPartition}_partition_") ||
+                                        message.queueName == queueNameWithoutPartition)
+                            ) {
+                                seenMessageIds.add(message.messageId)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // 개별 파일 오류는 무시
+                        logger.debug("파일 읽기 실패: $file - ${e.message}")
+                    }
+                }
+
+            seenMessageIds.size
+        } catch (e: Exception) {
+            logger.warn("COLD 메시지 수 조회 중 오류 발생: ${e.message}")
+            0
+        }
+    }
+
+    /**
+     * 특정 큐의 가장 오래된 메시지 시간을 조회 (파티션 포함)
+     */
+    fun getOldestMessageTime(tenantId: String, queueName: String): Instant? {
+        return try {
+            val queueNameWithoutPartition = queueName.split("_partition_")[0]
+            var oldestTime: Instant? = null
+
+            Files.walk(Paths.get(basePath))
+                .filter { Files.isRegularFile(it) && it.toString().endsWith(MESSAGE_FILE_EXTENSION) }
+                .filter { path ->
+                    // 경로나 파일명에서 큐 이름이 포함되어 있는지 확인
+                    val pathStr = path.toString()
+                    val fileName = path.fileName.toString()
+                    pathStr.contains("/$queueNameWithoutPartition/") ||
+                            pathStr.contains("/${queueNameWithoutPartition}_partition_") ||
+                            pathStr.contains("$queueNameWithoutPartition-batch-") ||
+                            fileName.startsWith("${tenantId}_$queueNameWithoutPartition") || // 콜론이 언더스코어로 치환된 경우
+                            fileName.startsWith("$tenantId:$queueNameWithoutPartition") // 기존 콜론 포함 경우
+                }
+                .forEach { file ->
+                    try {
+                        val fileMessages = readMessagesFromFile(file)
+                        fileMessages.forEach { message ->
+                            // 큐 이름 매칭
+                            if (message.queueName == queueName ||
+                                message.queueName.startsWith("${queueNameWithoutPartition}_partition_") ||
+                                message.queueName == queueNameWithoutPartition
+                            ) {
+                                val messageTime = message.sentTimestamp
+                                if (oldestTime == null || messageTime.isBefore(oldestTime)) {
+                                    oldestTime = messageTime
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // 개별 파일 오류는 무시
+                        logger.debug("파일 읽기 실패: $file - ${e.message}")
+                    }
+                }
+
+            oldestTime
+        } catch (e: Exception) {
+            logger.warn("COLD 최오래된 메시지 시간 조회 중 오류 발생: ${e.message}")
+            null
+        }
+    }
 }

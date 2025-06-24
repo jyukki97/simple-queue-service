@@ -251,25 +251,12 @@ class FifoTieringPolicyImpl(
     }
 
     /**
-     * Hot(Redis)에서 메시지 제거
-     */
-    private fun removeMessageFromHot(queue: Queue, messageId: String): Mono<Void> {
-        return Flux.range(0, partitionCount)
-            .flatMap { partitionNumber ->
-                val hotKey = getHotKeyForPartition(queue, partitionNumber)
-                redisTemplate.opsForList().remove(hotKey, 1, messageId)
-                    .cast(Long::class.java)
-            }
-            .then()
-    }
-
-    /**
      * Hot(Redis)에 메시지 저장
      */
     private fun saveMessageToHot(queue: Queue, message: Message): Mono<Void> {
         val partitionNumber = message.messageId.hashCode() % partitionCount
         val hotKey = getHotKeyForPartition(queue, partitionNumber)
-        
+
         return redisTemplate.opsForValue()
             .set("message:${message.messageId}", objectMapper.writeValueAsString(message))
             .cast(Boolean::class.java)
