@@ -38,7 +38,7 @@ class FifoTieringPolicyImpl(
         val countExceeded = stats.isCountExceeded(getHotMaxCount())
         val timeExceeded = stats.isTimeExceeded(getHotTimeThresholdHours())
 
-        logger.info("FIFO shouldMoveHotToWarm 검사: 메시지수=${stats.messageCount}, HOT최대=${getHotMaxCount()}, 개수초과=$countExceeded, 시간초과=$timeExceeded")
+        logger.info("FIFO shouldMoveHotToWarm 검사: 메시지수=${stats.messageCount}, HOT최대=${getHotMaxCount()}, 개수초과=$countExceeded, 시간초과=$timeExceeded, 파티션수=${partitionCount}")
 
         return countExceeded || timeExceeded
     }
@@ -61,7 +61,7 @@ class FifoTieringPolicyImpl(
             } ?: false
         } ?: false
 
-        logger.info("FIFO shouldSwapHotWarm 검사: HOT메시지수=${hotStats.messageCount}, WARM메시지수=${warmStats.messageCount}, HOT최대=${getHotMaxCount()}, HOT가득참=$hotFull, WARM에오래된메시지=$warmHasOlderMessages")
+        logger.info("FIFO shouldSwapHotWarm 검사: HOT메시지수=${hotStats.messageCount}, WARM메시지수=${warmStats.messageCount}, HOT최대=${getHotMaxCount()}, HOT가득참=$hotFull, WARM에오래된메시지=$warmHasOlderMessages, 파티션수=${partitionCount}")
 
         return hotFull && warmHasOlderMessages
     }

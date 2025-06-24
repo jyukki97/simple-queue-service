@@ -220,9 +220,7 @@ class RocksDBWarmStorageService(
                                 // Standard 큐: test-queue -> test-queue_partition_X
                                 val isMatchingQueue = message.tenantId == tenantId &&
                                         (message.queueName == queueName ||
-                                                message.queueName.startsWith("${queueName}_partition_") ||
-                                                message.queueName.startsWith("${queueName.removeSuffix(".fifo")}_partition_") ||
-                                                (queueName.endsWith(".fifo") && message.queueName.startsWith("${queueName}_partition_")))
+                                                message.queueName.startsWith("${queueName}_partition_"))
 
                                 if (isMatchingQueue) {
                                     // 오프셋 처리
@@ -452,9 +450,7 @@ class RocksDBWarmStorageService(
                                 // Standard 큐: test-queue -> test-queue_partition_X
                                 val isMatchingQueue = message.tenantId == tenantId &&
                                         (message.queueName == queueName ||
-                                                message.queueName.startsWith("${queueName}_partition_") ||
-                                                message.queueName.startsWith("${queueName.removeSuffix(".fifo")}_partition_") ||
-                                                (queueName.endsWith(".fifo") && message.queueName.startsWith("${queueName}_partition_")))
+                                                message.queueName.startsWith("${queueName}_partition_"))
 
                                 if (isMatchingQueue) {
                                     val messageId = key.removePrefix(MESSAGE_PREFIX)
@@ -511,9 +507,7 @@ class RocksDBWarmStorageService(
                                 // Standard 큐: test-queue -> test-queue_partition_X
                                 val isMatchingQueue = message.tenantId == tenantId &&
                                         (message.queueName == queueName ||
-                                                message.queueName.startsWith("${queueName}_partition_") ||
-                                                message.queueName.startsWith("${queueName.removeSuffix(".fifo")}_partition_") ||
-                                                (queueName.endsWith(".fifo") && message.queueName.startsWith("${queueName}_partition_")))
+                                                message.queueName.startsWith("${queueName}_partition_"))
 
                                 if (isMatchingQueue && message.sentTimestamp.isBefore(cutoffTime)) {
                                     val messageId = key.removePrefix(MESSAGE_PREFIX)
@@ -574,9 +568,7 @@ class RocksDBWarmStorageService(
                             // Standard 큐: test-queue -> test-queue_partition_X
                             val isMatchingQueue = message.tenantId == tenantId &&
                                     (message.queueName == queueName ||
-                                            message.queueName.startsWith("${queueName}_partition_") ||
-                                            message.queueName.startsWith("${queueName.removeSuffix(".fifo")}_partition_") ||
-                                            (queueName.endsWith(".fifo") && message.queueName.startsWith("${queueName}_partition_")))
+                                            message.queueName.startsWith("${queueName}_partition_"))
 
                             if (isMatchingQueue) {
 

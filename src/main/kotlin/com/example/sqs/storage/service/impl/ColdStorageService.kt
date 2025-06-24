@@ -348,16 +348,16 @@ class ColdStorageService(
                 val queueBasePath = Paths.get(basePath)
                 var deletedAny = false
 
-                // 모든 날짜 디렉토리에서 해당 큐 삭제 (콜론이 언더스코어로 치환된 경우도 포함)
+                // 안전한 큐 키 생성 (콜론을 언더스코어로 치환)
+                val safeQueueKey = "${tenantId}_$queueName"
+
+                // 모든 날짜 디렉토리에서 해당 큐 삭제
                 Files.walk(queueBasePath)
                     .filter { path ->
-                        val pathStr = path.toString()
-                        pathStr.contains("/$tenantId/$queueName") ||
-                                pathStr.contains("/$tenantId/${queueName}_partition_") ||
-                                pathStr.contains("/${tenantId}_$queueName") || // 콜론이 언더스코어로 치환된 경우
-                                pathStr.contains("/${tenantId}_${queueName}_partition_") || // 파티션도 포함
-                                path.fileName.toString().startsWith("${tenantId}_$queueName") || // 파일명도 확인
-                                path.fileName.toString().startsWith("${tenantId}:$queueName") // 기존 콜론 포함 경우
+                        val fileName = path.fileName.toString()
+                        // 정확한 큐 이름 매칭만 허용 (다른 큐와 간섭 방지)
+                        fileName == "$safeQueueKey$MESSAGE_FILE_EXTENSION" ||
+                                fileName.startsWith("${safeQueueKey}_partition_") && fileName.endsWith(MESSAGE_FILE_EXTENSION)
                     }
                     .sorted(Comparator.reverseOrder())
                     .forEach { path ->
@@ -533,21 +533,17 @@ class ColdStorageService(
 
     private fun getQueueMessages(queueName: String, maxCount: Int): List<Message> {
         val messages = mutableListOf<Message>()
-        val queueNameWithoutPartition = queueName.split("_partition_")[0]
         val seenMessageIds = mutableSetOf<String>() // 중복 메시지 방지
 
         try {
             Files.walk(Paths.get(basePath))
                 .filter { Files.isRegularFile(it) && it.toString().endsWith(MESSAGE_FILE_EXTENSION) }
                 .filter { path ->
-                    // 경로나 파일명에서 큐 이름이 포함되어 있는지 확인 (콜론이 언더스코어로 치환된 경우도 포함)
-                    val pathStr = path.toString()
                     val fileName = path.fileName.toString()
-                    pathStr.contains("/$queueNameWithoutPartition/") ||
-                            pathStr.contains("/${queueNameWithoutPartition}_partition_") ||
-                            pathStr.contains("$queueNameWithoutPartition-batch-") ||
-                            fileName.startsWith("tenant-1_$queueNameWithoutPartition") || // 콜론이 언더스코어로 치환된 경우
-                            fileName.startsWith("tenant-1:$queueNameWithoutPartition") // 기존 콜론 포함 경우
+                    // 정확한 큐 이름 매칭만 허용 (다른 큐와 간섭 방지)
+                    // 파일명 패턴: tenant-1_queueName.json.gz 또는 tenant-1_queueName_partition_X.json.gz
+                    fileName.startsWith("tenant-1_$queueName$MESSAGE_FILE_EXTENSION") ||
+                            fileName.startsWith("tenant-1_${queueName}_partition_") && fileName.endsWith(MESSAGE_FILE_EXTENSION)
                 }
                 .forEach { file ->
                     if (messages.size >= maxCount) return@forEach
@@ -556,12 +552,11 @@ class ColdStorageService(
                         val fileMessages = readMessagesFromFile(file)
 
                         fileMessages.forEach { message ->
-                            // 중복 메시지 체크 및 큐 이름 매칭
+                            // 중복 메시지 체크 및 정확한 큐 이름 매칭
                             if (messages.size < maxCount &&
                                 !seenMessageIds.contains(message.messageId) &&
                                 (message.queueName == queueName ||
-                                        message.queueName.startsWith("${queueNameWithoutPartition}_partition_") ||
-                                        message.queueName == queueNameWithoutPartition)
+                                        message.queueName.startsWith("${queueName}_partition_"))
                             ) {
                                 messages.add(message)
                                 seenMessageIds.add(message.messageId)

@@ -3,17 +3,20 @@ package com.example.sqs.storage.service
 import com.example.sqs.queue.domain.Queue
 import com.example.sqs.storage.domain.StandardTieringPolicy
 import com.example.sqs.storage.domain.TierStats
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.data.redis.core.ReactiveRedisTemplate
 import org.springframework.stereotype.Service
 import reactor.core.publisher.Flux
+import reactor.core.publisher.Mono
 import java.time.Instant
 
 @Service
 class StandardTieringPolicyImpl(
     private val redisTemplate: ReactiveRedisTemplate<String, String>,
     private val warmTierManagerService: WarmTierManagerService,
+    private val objectMapper: ObjectMapper,
     @Value("\${queue.partition-count:4}") private val partitionCount: Int
 ) : StandardTieringPolicy {
 
@@ -74,14 +77,11 @@ class StandardTieringPolicyImpl(
             // 시간 초과: RocksDB에서 만료된 메시지들을 이관
             logger.info("Standard Warm→Cold 시간 초과 이관")
 
-            val thresholdTime = java.time.Instant.now().minusSeconds(getWarmTimeThresholdHours() * 3600)
+            val thresholdTime = Instant.now().minusSeconds(getWarmTimeThresholdHours() * 3600)
 
             warmTierManagerService.getWarmMessagesByQueue(queue.tenantId, queue.queueName, Int.MAX_VALUE, 0)
-                .filter { it.sentTimestamp.isBefore(thresholdTime) }
+                .filter { message -> message.sentTimestamp.isBefore(thresholdTime) }
                 .map { it.messageId }
-                .doOnNext { messageId ->
-                    logger.debug("WARM→COLD 만료 이동 대상 메시지: $messageId")
-                }
         }
     }
 
@@ -119,32 +119,41 @@ class StandardTieringPolicyImpl(
                 // 메시지 타임스탬프 확인
                 getMessageTimestamp(messageId)
                     .map { timestamp -> timestamp.isBefore(cutoffTime) }
-                    .defaultIfEmpty(false)
+                    .defaultIfEmpty(false) // 타임스탬프를 확인할 수 없으면 만료되지 않은 것으로 처리
             }
     }
 
     /**
      * 메시지 타임스탬프 조회
      */
-    private fun getMessageTimestamp(messageId: String): reactor.core.publisher.Mono<Instant> {
-        return redisTemplate.opsForHash<String, String>()
-            .get("message:$messageId", "timestamp")
-            .switchIfEmpty(
-                redisTemplate.opsForHash<String, String>()
-                    .get("message:$messageId", "sentTimestamp")
-            )
-            .switchIfEmpty(
-                redisTemplate.opsForHash<String, String>()
-                    .get("message:$messageId", "createdAt")
-            )
-            .map { timestampStr ->
+    private fun getMessageTimestamp(messageId: String): Mono<Instant> {
+        return redisTemplate.opsForValue()
+            .get("message:$messageId")
+            .map { messageJson ->
                 try {
-                    Instant.parse(timestampStr)
+                    val messageData = objectMapper.readTree(messageJson)
+                    val timestampStr = messageData.get("sentTimestamp")?.asText()
+                        ?: messageData.get("timestamp")?.asText()
+                        ?: messageData.get("createdAt")?.asText()
+
+                    if (timestampStr != null) {
+                        Instant.parse(timestampStr)
+                    } else {
+                        logger.warn("메시지 $messageId 의 타임스탬프를 찾을 수 없음")
+                        Instant.now()
+                    }
                 } catch (e: Exception) {
-                    logger.warn("Failed to parse timestamp: $timestampStr", e)
+                    logger.warn("메시지 $messageId 타임스탬프 파싱 실패: ${e.message}")
                     Instant.now()
                 }
             }
+            .switchIfEmpty(
+                // 메시지가 없으면 현재 시간 - 새 메시지가 바로 만료되지 않도록 함
+                Mono.fromCallable {
+                    logger.debug("메시지 $messageId 를 찾을 수 없음, 현재 시간으로 설정")
+                    Instant.now()
+                }
+            )
             .onErrorReturn(Instant.now())
     }
 }
