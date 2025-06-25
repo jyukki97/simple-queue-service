@@ -191,13 +191,13 @@ class WarmTierManagerService(
             Flux.range(0, partitionCount)
                 .flatMap { partitionNumber ->
                     redisTemplate.opsForList().remove(
-                        redisKeyManager.getHotQueueKey(tenantId, queueName, partitionNumber),
+                        redisKeyManager.getAvailableQueueKey(tenantId, queueName, partitionNumber),
                         1, messageId
                     )
                 },
             // HOT 인덱스에서 제거
             redisTemplate.opsForZSet().remove(
-                redisKeyManager.getHotIndexKey(tenantId, queueName),
+                redisKeyManager.getQueueIndexKey(tenantId, queueName),
                 messageId
             )
         ).then()

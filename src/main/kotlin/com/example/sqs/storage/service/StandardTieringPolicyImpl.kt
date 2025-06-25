@@ -46,7 +46,7 @@ class StandardTieringPolicyImpl(
 
             Flux.range(0, partitionCount)
                 .flatMap { partitionNumber ->
-                    val hotKey = "hot:queue:${queue.tenantId}:${queue.queueName}_partition_${partitionNumber}"
+                    val hotKey = "queue:${queue.tenantId}:${queue.queueName}_partition_${partitionNumber}"
                     getOldestMessages(hotKey, moveCountPerPartition)
                 }
         } else {
@@ -55,7 +55,7 @@ class StandardTieringPolicyImpl(
 
             Flux.range(0, partitionCount)
                 .flatMap { partitionNumber ->
-                    val hotKey = "hot:queue:${queue.tenantId}:${queue.queueName}_partition_${partitionNumber}"
+                    val hotKey = "queue:${queue.tenantId}:${queue.queueName}_partition_${partitionNumber}"
                     getExpiredMessages(hotKey, getHotTimeThresholdHours())
                 }
         }

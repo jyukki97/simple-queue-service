@@ -159,7 +159,7 @@ class RedisQueueRepository(
         // HOT 계층(Redis)의 파티션별 메시지 수 집계
         val hotMessagesMono = Flux.range(0, partitionCount)
             .flatMap { partitionNumber ->
-                val hotKey = "hot:queue:${queue.tenantId}:${queue.queueName}_partition_${partitionNumber}"
+                val hotKey = "queue:${queue.tenantId}:${queue.queueName}_partition_${partitionNumber}"
                 stringRedisTemplate.opsForList().size(hotKey).defaultIfEmpty(0L)
             }
             .reduce(0L) { acc, count -> acc + count }
@@ -206,7 +206,7 @@ class RedisQueueRepository(
         // 가장 오래된 메시지 조회 (HOT, WARM, COLD 모든 계층에서 비교)
         val hotOldestMono = Flux.range(0, partitionCount)
             .flatMap { partitionNumber ->
-                val hotKey = "hot:queue:${queue.tenantId}:${queue.queueName}_partition_${partitionNumber}"
+                val hotKey = "queue:${queue.tenantId}:${queue.queueName}_partition_${partitionNumber}"
                 // HOT에서는 리스트의 끝이 가장 오래된 메시지 (FIFO의 경우)
                 stringRedisTemplate.opsForList().index(hotKey, -1)
                     .flatMap { messageId ->

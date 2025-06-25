@@ -73,9 +73,9 @@ class RedisMessageRepository(
         logger.info("큐 메시지 전체 삭제 시작: queue=${queue.queueName}")
         
         return redisTemplate.delete(
-            redisKeyManager.getHotQueueKey(queue.tenantId, queue.queueName),
+            redisKeyManager.getAvailableQueueKey(queue.tenantId, queue.queueName),
             redisKeyManager.getDelayedQueueKey(queue.tenantId, queue.queueName),
-            redisKeyManager.getInFlightQueueKey(queue.tenantId, queue.queueName)
+            redisKeyManager.getProcessingQueueKey(queue.tenantId, queue.queueName)
         ).then()
             .doOnSuccess { logger.info("큐 메시지 전체 삭제 완료: queue=${queue.queueName}") }
     }
@@ -84,7 +84,7 @@ class RedisMessageRepository(
         val now = Instant.now().epochSecond
         
         return redisTemplate.opsForZSet()
-            .removeRangeByScore(redisKeyManager.getInFlightQueueKey(queue.tenantId, queue.queueName), Range.closed(0.0, now.toDouble()))
+            .removeRangeByScore(redisKeyManager.getProcessingQueueKey(queue.tenantId, queue.queueName), Range.closed(0.0, now.toDouble()))
             .map { count ->
                 if (count > 0) {
                     logger.info("만료된 메시지 $count 개를 복원했습니다: queue=${queue.queueName}")
@@ -106,7 +106,7 @@ class RedisMessageRepository(
                         .removeRangeByScore(redisKeyManager.getDelayedQueueKey(queue.tenantId, queue.queueName), Range.closed(0.0, now.toDouble()))
                         .then(
                             redisTemplate.opsForList()
-                                .rightPushAll(redisKeyManager.getHotQueueKey(queue.tenantId, queue.queueName), messageIds)
+                                .rightPushAll(redisKeyManager.getAvailableQueueKey(queue.tenantId, queue.queueName), messageIds)
                         )
                         .map { messageIds.size.toLong() }
                 } else {
@@ -138,7 +138,7 @@ class RedisMessageRepository(
         } else {
             // 즉시 처리 가능한 메시지는 available queue에 추가
             redisTemplate.opsForList()
-                .rightPush(redisKeyManager.getHotQueueKey(queue.tenantId, queue.queueName), message.messageId)
+                .rightPush(redisKeyManager.getAvailableQueueKey(queue.tenantId, queue.queueName), message.messageId)
         }
     }
 
@@ -146,7 +146,7 @@ class RedisMessageRepository(
         return Flux.range(1, maxMessages)
             .flatMap {
                 redisTemplate.opsForList()
-                    .leftPop(redisKeyManager.getHotQueueKey(queue.tenantId, queue.queueName))
+                    .leftPop(redisKeyManager.getAvailableQueueKey(queue.tenantId, queue.queueName))
             }
             .filter { it != null }
     }
@@ -155,17 +155,17 @@ class RedisMessageRepository(
         val score = message.visibleAt.epochSecond.toDouble()
         val value = "${message.messageId}:${message.receiptHandle}"
         return redisTemplate.opsForZSet()
-            .add(redisKeyManager.getInFlightQueueKey(queue.tenantId, queue.queueName), value, score)
+            .add(redisKeyManager.getProcessingQueueKey(queue.tenantId, queue.queueName), value, score)
             .map { if (it) 1L else 0L }
     }
 
     private fun removeFromInFlight(queue: Queue, receiptHandle: String): Mono<Void> {
         return redisTemplate.opsForZSet()
-            .range(redisKeyManager.getInFlightQueueKey(queue.tenantId, queue.queueName), Range.closed(0L, -1L))
+            .range(redisKeyManager.getProcessingQueueKey(queue.tenantId, queue.queueName), Range.closed(0L, -1L))
             .filter { it.contains(":$receiptHandle") }
             .flatMap { value ->
                 redisTemplate.opsForZSet()
-                    .remove(redisKeyManager.getInFlightQueueKey(queue.tenantId, queue.queueName), value)
+                    .remove(redisKeyManager.getProcessingQueueKey(queue.tenantId, queue.queueName), value)
             }
             .then()
     }
@@ -175,7 +175,7 @@ class RedisMessageRepository(
         
         // available 큐에서 메시지 ID들을 가져와서 (제거하지 않고) 내용을 조회
         return redisTemplate.opsForList()
-            .range(redisKeyManager.getHotQueueKey(queue.tenantId, queue.queueName), 0, (maxMessages - 1).toLong())
+            .range(redisKeyManager.getAvailableQueueKey(queue.tenantId, queue.queueName), 0, (maxMessages - 1).toLong())
             .flatMap { messageId ->
                 getMessageDetails(messageId)
                     .map { message -> MessagePreview.fromMessage(message) }

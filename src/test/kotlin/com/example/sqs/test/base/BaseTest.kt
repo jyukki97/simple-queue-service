@@ -33,7 +33,7 @@ abstract class BaseIntegrationTest {
         try {
             StepVerifier.create(redisTemplate.execute { connection ->
                 connection.serverCommands().flushAll()
-            }).expectNext().verifyComplete()
+            }).expectNextMatches { it == "OK" }.verifyComplete()
         } catch (e: Exception) {
             // Redis 연결 실패 시 무시 (테스트 환경에서는 선택사항)
         }
@@ -62,44 +62,6 @@ abstract class BaseIntegrationTest {
     protected fun createTestApiKey(): String = "test-api-key-${System.currentTimeMillis()}"
     
     protected fun createTestTenantId(): String = "test-tenant-${System.currentTimeMillis()}"
-}
-
-/**
- * 서비스 계층 테스트 기반 클래스
- */
-@SpringBootTest
-@ActiveProfiles("test")
-abstract class BaseServiceTest {
-    
-    @Autowired
-    protected lateinit var redisTemplate: ReactiveRedisTemplate<String, String>
-    
-    protected val testDataFactory = TestDataFactory
-    
-    @BeforeEach
-    fun serviceSetUp() {
-        // Redis 데이터 정리 (선택사항)
-        try {
-            StepVerifier.create(redisTemplate.execute { connection ->
-                connection.serverCommands().flushAll()
-            }).expectNext().verifyComplete()
-        } catch (e: Exception) {
-            // Redis 연결 실패 시 무시
-        }
-    }
-    
-    @AfterEach
-    fun serviceTearDown() {
-        // 테스트 데이터 디렉토리 정리
-        try {
-            val testDataDir = File("./test-data")
-            if (testDataDir.exists()) {
-                testDataDir.deleteRecursively()
-            }
-        } catch (e: Exception) {
-            // 정리 실패 시 무시
-        }
-    }
 }
 
 /**

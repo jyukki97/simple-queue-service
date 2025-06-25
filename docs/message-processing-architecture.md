@@ -35,8 +35,8 @@ message:location:{messageId}           // 메시지 위치 정보 (Redis Hash)
 
 #### HOT 계층 (Redis)
 ```
-hot:queue:{tenantId}:{queueName}                     // Standard 큐 메시지 목록 (Redis List)
-hot:queue:{tenantId}:{queueName}_partition_{N}       // FIFO 큐 파티션별 메시지 목록 (Redis List)
+queue:{tenantId}:{queueName}                     // Standard 큐 메시지 목록 (Redis List)
+queue:{tenantId}:{queueName}_partition_{N}       // FIFO 큐 파티션별 메시지 목록 (Redis List)
 hot:index:{tenantId}:{queueName}                     // 시간 기반 인덱스 (Redis ZSet)
 hot:index:{tenantId}:{queueName}_partition_{N}       // FIFO 파티션별 시간 인덱스 (Redis ZSet)
 ```
@@ -76,7 +76,7 @@ graph TD
     B --> C[파티션 결정 hashCode % partitionCount]
     C --> D[HOT 계층 저장]
     D --> E[메시지 본체 저장: message:messageId]
-    E --> F[큐 인덱스 추가: hot:queue:tenantId:queueName]
+    E --> F[큐 인덱스 추가: queue:tenantId:queueName]
     F --> G[시간 인덱스 추가: hot:index:tenantId:queueName]
     G --> H[위치 정보 저장: message:location:messageId]
     H --> I[메트릭 업데이트]
@@ -102,7 +102,7 @@ val partitionNumber = messageBody.hashCode() % partitionCount
 redisTemplate.opsForValue().set("message:${messageId}", messageJson, ttl)
 
 // 큐 인덱스 (List - FIFO 순서)
-redisTemplate.opsForList().rightPush("hot:queue:${tenantId}:${queueName}", messageId)
+redisTemplate.opsForList().rightPush("queue:${tenantId}:${queueName}", messageId)
 
 // 시간 인덱스 (ZSet - 시간 기반 정렬)
 redisTemplate.opsForZSet().add("hot:index:${tenantId}:${queueName}", messageId, timestamp)
@@ -114,7 +114,7 @@ redisTemplate.opsForHash().putAll("message:location:${messageId}", locationData)
 #### 2. 메시지 수신 (ReceiveMessage)
 ```kotlin
 // 1. HOT 계층에서 메시지 ID 조회 (List에서 leftPop)
-val messageId = redisTemplate.opsForList().leftPop("hot:queue:${tenantId}:${queueName}")
+val messageId = redisTemplate.opsForList().leftPop("queue:${tenantId}:${queueName}")
 
 // 2. 메시지 본체 조회
 val messageJson = redisTemplate.opsForValue().get("message:${messageId}")
@@ -134,7 +134,7 @@ redisTemplate.opsForZSet().remove("hot:index:${tenantId}:${queueName}", messageI
 // 1. 이동할 메시지 선택 (시간 또는 개수 기준)
 val messagesToMove = if (countExceeded) {
     // 개수 초과: 가장 오래된 메시지들
-    redisTemplate.opsForList().range("hot:queue:${tenantId}:${queueName}", 0, moveCount-1)
+    redisTemplate.opsForList().range("queue:${tenantId}:${queueName}", 0, moveCount-1)
 } else {
     // 시간 초과: 임계값 이전 메시지들
     redisTemplate.opsForZSet().rangeByScore("hot:index:${tenantId}:${queueName}", 0, cutoffTime)
@@ -143,7 +143,7 @@ val messagesToMove = if (countExceeded) {
 // 2. 메시지 이동
 messagesToMove.forEach { messageId ->
     // HOT에서 제거
-    redisTemplate.opsForList().remove("hot:queue:${tenantId}:${queueName}", 1, messageId)
+    redisTemplate.opsForList().remove("queue:${tenantId}:${queueName}", 1, messageId)
     redisTemplate.opsForZSet().remove("hot:index:${tenantId}:${queueName}", messageId)
     
     // WARM에 추가 (ZSet으로 변경)
@@ -197,7 +197,7 @@ graph TD
     C --> D[파티션 결정: groupId.hashCode % partitionCount]
     D --> E[HOT 계층 파티션별 저장]
     E --> F[메시지 본체: message:messageId]
-    F --> G[파티션 큐: hot:queue:tenantId:queueName_partition_N]
+    F --> G[파티션 큐: queue:tenantId:queueName_partition_N]
     G --> H[위치 정보에 파티션 저장]
 ```
 
@@ -238,7 +238,7 @@ val message = Message(
 redisTemplate.opsForValue().set("message:${messageId}", messageJson, ttl)
 
 // 파티션별 큐에 추가 (엄격한 FIFO 순서)
-redisTemplate.opsForList().rightPush("hot:queue:${tenantId}:${partitionedQueueName}", messageId)
+redisTemplate.opsForList().rightPush("queue:${tenantId}:${partitionedQueueName}", messageId)
 
 // 위치 정보 저장 (파티션 정보 포함)
 val locationData = mapOf(
@@ -255,7 +255,7 @@ redisTemplate.opsForHash().putAll("message:location:${messageId}", locationData)
 // 1. 모든 파티션을 라운드로빈으로 확인
 for (partitionNumber in 0 until partitionCount) {
     val partitionedQueueName = "${queueName}_partition_${partitionNumber}"
-    val queueKey = "hot:queue:${tenantId}:${partitionedQueueName}"
+    val queueKey = "queue:${tenantId}:${partitionedQueueName}"
     
     // 파티션에서 메시지 수신 (FIFO 순서 보장)
     val messageId = redisTemplate.opsForList().leftPop(queueKey)
@@ -348,7 +348,7 @@ fun swapHotWarm(hotStats: TierStats, warmStats: TierStats) {
     if (shouldSwap) {
         // 각 파티션별로 스왑 수행
         for (partitionNumber in 0 until partitionCount) {
-            val hotKey = "hot:queue:${tenantId}:${queueName}_partition_${partitionNumber}"
+            val hotKey = "queue:${tenantId}:${queueName}_partition_${partitionNumber}"
             val warmKey = "warm:queue:${tenantId}:${queueName}_partition_${partitionNumber}"
             
             // Hot의 최신 메시지와 Warm의 오래된 메시지 교환

@@ -1,5 +1,6 @@
 package com.example.sqs.storage.util
 
+import com.example.sqs.common.redis.RedisKeyManager
 import com.example.sqs.message.domain.Message
 import com.example.sqs.queue.domain.Queue
 import com.example.sqs.storage.domain.StorageTier
@@ -18,14 +19,15 @@ import kotlin.math.abs
 class MessageStorageUtils(
     private val redisTemplate: ReactiveRedisTemplate<String, String>,
     private val objectMapper: ObjectMapper,
-    private val storageStatsService: StorageStatsService
+    private val storageStatsService: StorageStatsService,
+    private val redisKeyManager: RedisKeyManager
 ) {
 
     /**
      * 메시지 상세 정보를 JSON으로 저장
      */
     fun saveMessageDetails(message: Message): Mono<Void> {
-        val messageKey = "message:${message.messageId}"
+        val messageKey = redisKeyManager.getMessageKey(message.messageId)
         val messageJson = objectMapper.writeValueAsString(message)
 
         return redisTemplate.opsForValue()
@@ -45,7 +47,7 @@ class MessageStorageUtils(
      * 메시지 ID로 상세 정보 조회
      */
     fun getMessageDetails(messageId: String): Mono<Message> {
-        val messageKey = "message:$messageId"
+        val messageKey = redisKeyManager.getMessageKey(messageId)
 
         return redisTemplate.opsForValue()
             .get(messageKey)
@@ -93,10 +95,11 @@ class MessageStorageUtils(
 }
 
 /**
- * 큐 관련 키 생성 확장 함수들 (이미 존재하는 것들)
+ * 큐 관련 키 생성 확장 함수들 (RedisKeyManager 사용 권장)
+ * @deprecated RedisKeyManager의 메소드 사용을 권장합니다
  */
-fun Queue.getHotKey(partition: Int): String = "hot:queue:$tenantId:${queueName}_partition_$partition"
-fun Queue.getWarmKey(partition: Int): String = "warm:queue:$tenantId:${queueName}_partition_$partition"
-fun Queue.getColdKey(partition: Int): String = "cold:queue:$tenantId:${queueName}_partition_$partition"
-fun Queue.getDelayedKey(partition: Int): String = "delayed:queue:$tenantId:${queueName}_partition_$partition"
-fun Queue.getInFlightKey(partition: Int): String = "inflight:queue:$tenantId:${queueName}_partition_$partition"
+fun Queue.getHotKey(partition: Int): String = "queue:$tenantId:${queueName}_partition_$partition"
+fun Queue.getWarmKey(partition: Int): String = "storage:warm:$tenantId:${queueName}_partition_$partition"  
+fun Queue.getColdKey(partition: Int): String = "storage:cold:$tenantId:${queueName}_partition_$partition"
+fun Queue.getDelayedKey(partition: Int): String = "delayed:$tenantId:${queueName}_partition_$partition"
+fun Queue.getInFlightKey(partition: Int): String = "inflight:$tenantId:${queueName}_partition_$partition"

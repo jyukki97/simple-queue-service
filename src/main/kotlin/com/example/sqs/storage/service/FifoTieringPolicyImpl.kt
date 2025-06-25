@@ -175,7 +175,7 @@ class FifoTieringPolicyImpl(
      * 파티션별 Hot 키 생성
      */
     private fun getHotKeyForPartition(queue: Queue, partitionNumber: Int): String {
-        return "hot:queue:${queue.tenantId}:${queue.queueName}_partition_${partitionNumber}"
+        return "queue:${queue.tenantId}:${queue.queueName}_partition_${partitionNumber}"
     }
 
     /**

@@ -2,10 +2,10 @@ package com.example.sqs.message.service
 
 import com.example.sqs.message.domain.Message
 import com.example.sqs.queue.domain.Queue
+import com.example.sqs.storage.service.WarmTierManagerService
 import com.example.sqs.storage.util.MessageStorageUtils
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
-import org.springframework.data.domain.Range
 import org.springframework.data.redis.core.ReactiveRedisTemplate
 import org.springframework.stereotype.Service
 import reactor.core.publisher.Flux
@@ -18,42 +18,79 @@ import kotlin.math.abs
 class UnifiedMessageService(
     private val redisTemplate: ReactiveRedisTemplate<String, String>,
     private val messageStorageUtils: MessageStorageUtils,
+    private val warmTierManagerService: WarmTierManagerService,
     @Value("\${queue.partition-count:4}") private val partitionCount: Int
 ) {
 
     private val logger = LoggerFactory.getLogger(UnifiedMessageService::class.java)
 
     /**
-     * 통합된 메시지 수신 (파티션 기반, Hot → Warm → Cold 순서)
+     * 통합된 메시지 수신 (올바른 아키텍처: Available 큐 → Location 확인 → 실제 스토리지 조회)
      */
-    fun receiveMessages(queue: Queue, maxMessages: Int, visibilityTimeoutSeconds: Int?, messageGroupId: String? = null): Flux<Message> {
-        logger.debug("메시지 수신 시작: queue=${queue.queueName}, maxMessages=$maxMessages, fifo=${queue.attributes.fifoQueue}")
+    fun receiveMessages(queue: Queue, maxMessages: Int, visibilityTimeoutSeconds: Int?, messageGroupId: String? = null, waitTimeSeconds: Int = 0): Flux<Message> {
+        logger.debug("메시지 수신 시작: queue=${queue.queueName}, maxMessages=$maxMessages, fifo=${queue.attributes.fifoQueue}, waitTime=${waitTimeSeconds}s")
 
-        return if (queue.attributes.fifoQueue && messageGroupId != null) {
-            // FIFO 큐에서 특정 MessageGroupId의 메시지만 수신
-            receiveFromSpecificGroup(queue, maxMessages, messageGroupId, "hot")
-                .switchIfEmpty(
-                    receiveFromSpecificGroup(queue, maxMessages, messageGroupId, "warm")
-                        .switchIfEmpty(
-                            receiveFromSpecificGroup(queue, maxMessages, messageGroupId, "cold")
-                        )
-                )
-        } else {
-            // 모든 파티션에서 수신 (기존 로직)
-            receiveFromAllPartitions(queue, maxMessages, "hot")
-                .switchIfEmpty(
-                    receiveFromAllPartitions(queue, maxMessages, "warm")
-                        .switchIfEmpty(
-                            receiveFromAllPartitions(queue, maxMessages, "cold")
-                        )
-                )
-        }
+        return receiveMessagesInternal(queue, maxMessages, messageGroupId)
             .take(maxMessages.toLong())
-            .flatMap { message ->
-                processReceivedMessage(queue, message, visibilityTimeoutSeconds)
+            .collectList()
+            .flatMapMany { messages ->
+                if (messages.isNotEmpty() || waitTimeSeconds <= 0) {
+                    // 메시지가 있거나 대기 시간이 없으면 즉시 반환
+                    Flux.fromIterable(messages)
+                } else {
+                    // Long Polling: 메시지가 없으면 잠시 대기 후 재시도
+                    performLongPolling(queue, maxMessages, waitTimeSeconds, messageGroupId)
+                }
             }
-            .doOnNext { message ->
-                logger.debug("메시지 수신 완료: messageId=${message.messageId}")
+            .flatMap { message -> processReceivedMessage(queue, message, visibilityTimeoutSeconds) }
+            .doOnNext { message -> logger.debug("메시지 수신 완료: messageId=${message.messageId}") }
+    }
+
+    /**
+     * 메시지 수신 핵심 로직 (공통)
+     */
+    private fun receiveMessagesInternal(queue: Queue, maxMessages: Int, messageGroupId: String?): Flux<Message> {
+        return if (queue.attributes.fifoQueue && messageGroupId != null) {
+            // FIFO 큐에서 특정 MessageGroupId 파티션에서만 수신
+            val partition = abs(messageGroupId.hashCode()) % partitionCount
+            receiveFromAvailableQueue(queue, partition, maxMessages)
+                .filter { message ->
+                    // 메시지의 MessageGroupId가 요청한 것과 일치하는지 확인
+                    val msgGroupId = message.messageGroupId ?: message.attributes["MessageGroupId"]
+                    msgGroupId == messageGroupId
+                }
+        } else {
+            // Standard 큐: 모든 파티션에서 라운드로빈으로 수신
+            receiveFromAllAvailableQueues(queue, maxMessages)
+        }
+    }
+
+    /**
+     * Long Polling 구현 (공통 로직 활용)
+     */
+    private fun performLongPolling(queue: Queue, maxMessages: Int, waitTimeSeconds: Int, messageGroupId: String?): Flux<Message> {
+        val pollInterval = 500L // 500ms마다 폴링
+        val maxPolls = (waitTimeSeconds * 1000L / pollInterval).toInt()
+
+        return Flux.range(0, maxPolls)
+            .concatMap { pollCount ->
+                // 각 폴링 간격마다 대기
+                if (pollCount > 0) {
+                    Mono.delay(java.time.Duration.ofMillis(pollInterval))
+                        .then(Mono.empty<Message>())
+                } else {
+                    Mono.empty()
+                }
+                    .thenMany(receiveMessagesInternal(queue, maxMessages, messageGroupId))
+            }
+            .take(maxMessages.toLong())
+            .collectList()
+            .flatMapMany { messages ->
+                if (messages.isNotEmpty()) {
+                    Flux.fromIterable(messages)
+                } else {
+                    Flux.empty()
+                }
             }
     }
 
@@ -72,101 +109,99 @@ class UnifiedMessageService(
     }
 
     /**
-     * 모든 파티션에서 메시지 수신 시도
+     * 모든 Available 큐에서 라운드로빈으로 메시지 수신 (올바른 아키텍처)
      */
-    private fun receiveFromAllPartitions(queue: Queue, maxMessages: Int, tier: String): Flux<Message> {
+    private fun receiveFromAllAvailableQueues(queue: Queue, maxMessages: Int): Flux<Message> {
         return Flux.range(0, partitionCount)
-            .flatMap { partition ->
-                when (tier) {
-                    "hot" -> receiveFromHotPartition(queue, partition, maxMessages)
-                    "warm" -> receiveFromWarmPartition(queue, partition, maxMessages)
-                    "cold" -> receiveFromColdPartition(queue, partition, maxMessages)
-                    else -> Flux.empty()
+            .concatMap { partition ->
+                val messagesPerPartition = kotlin.math.ceil(maxMessages.toDouble() / partitionCount).toInt()
+                receiveFromAvailableQueue(queue, partition, messagesPerPartition)
+            }
+            .take(maxMessages.toLong())
+    }
+
+    /**
+     * 특정 파티션의 Available 큐에서 메시지 수신 (올바른 아키텍처)
+     */
+    private fun receiveFromAvailableQueue(queue: Queue, partition: Int, maxMessages: Int): Flux<Message> {
+        val availableKey = queue.getHotKey(partition) // 실제로는 Available 큐 키
+
+        return Flux.range(0, maxMessages)
+            .concatMap {
+                // 1. Available 큐에서 메시지 ID를 pop
+                val popOperation = if (queue.attributes.fifoQueue) {
+                    redisTemplate.opsForList().leftPop(availableKey) // FIFO: 순서 보장
+                } else {
+                    redisTemplate.opsForList().rightPop(availableKey) // Standard: LIFO
                 }
+
+                popOperation
+                    .flatMap { messageId ->
+                        // 2. 메시지 위치 정보 확인
+                        getMessageLocation(messageId)
+                            .flatMap { location ->
+                                // 3. 위치에 따라 실제 메시지 데이터 조회
+                                getMessageFromStorage(messageId, location)
+                            }
+                    }
+            }
+            .filter { it != null }
+            .doOnNext { message ->
+                logger.debug("Available 큐에서 메시지 수신: partition=$partition, messageId=${message.messageId}")
             }
     }
 
     /**
-     * Hot Storage에서 메시지 수신
+     * 메시지 위치 정보 조회 (message:location:{messageId})
      */
-    private fun receiveFromHotPartition(queue: Queue, partition: Int, maxMessages: Int): Flux<Message> {
-        val hotKey = queue.getHotKey(partition)
-
-        return if (queue.attributes.fifoQueue) {
-            // FIFO: 순서 보장을 위해 LPOP 사용
-            redisTemplate.opsForList()
-                .leftPop(hotKey)
-                .repeat((maxMessages - 1).toLong())
-                .filter { it != null }
-        } else {
-            // Standard: RPOP으로 LIFO 방식
-            redisTemplate.opsForList()
-                .rightPop(hotKey)
-                .repeat((maxMessages - 1).toLong())
-                .filter { it != null }
-        }
-            .flatMap { messageId -> messageStorageUtils.getMessageDetails(messageId) }
-    }
-
-    /**
-     * Warm Storage에서 메시지 수신 (자동 Hot 승격)
-     */
-    private fun receiveFromWarmPartition(queue: Queue, partition: Int, maxMessages: Int): Flux<Message> {
-        val warmKey = queue.getWarmKey(partition)
-
-        return redisTemplate.opsForZSet()
-            .range(warmKey, Range.closed(0L, (maxMessages - 1).toLong()))
-            .flatMap { messageId ->
-                promoteToHot(queue, messageId, partition)
-                    .then(messageStorageUtils.getMessageDetails(messageId))
+    private fun getMessageLocation(messageId: String): Mono<String> {
+        val locationKey = "message:location:$messageId"
+        return redisTemplate.opsForValue()
+            .get(locationKey)
+            .defaultIfEmpty("HOT") // 기본값은 HOT
+            .doOnNext { location ->
+                logger.debug("메시지 위치 확인: messageId=$messageId, location=$location")
             }
     }
 
     /**
-     * Cold Storage에서 메시지 수신 (자동 Hot 승격)
+     * 스토리지 위치에 따라 실제 메시지 데이터 조회
      */
-    private fun receiveFromColdPartition(queue: Queue, partition: Int, maxMessages: Int): Flux<Message> {
-        val coldKey = queue.getColdKey(partition)
-
-        return redisTemplate.opsForZSet()
-            .range(coldKey, Range.closed(0L, (maxMessages - 1).toLong()))
-            .flatMap { messageId ->
-                promoteToHot(queue, messageId, partition)
-                    .then(messageStorageUtils.getMessageDetails(messageId))
+    private fun getMessageFromStorage(messageId: String, location: String): Mono<Message> {
+        return when (location.uppercase()) {
+            "HOT" -> {
+                // Redis에서 메시지 상세 정보 조회
+                messageStorageUtils.getMessageDetails(messageId)
+                    .doOnNext { logger.debug("HOT 스토리지에서 메시지 조회: messageId=$messageId") }
             }
-    }
 
-    /**
-     * 특정 MessageGroupId의 파티션에서 메시지 수신
-     */
-    private fun receiveFromSpecificGroup(queue: Queue, maxMessages: Int, messageGroupId: String, tier: String): Flux<Message> {
-        // MessageGroupId에 해당하는 파티션 계산
-        val partition = abs(messageGroupId.hashCode()) % partitionCount
+            "WARM" -> {
+                // RocksDB에서 메시지 조회 (승격 없이 그대로 조회)
+                warmTierManagerService.getMessageFromWarm(messageId)
+                    .cast(Message::class.java) // Mono<Message?> -> Mono<Message>
+                    .doOnNext { logger.debug("WARM 스토리지에서 메시지 조회: messageId=$messageId") }
+            }
 
-        return when (tier) {
-            "hot" -> receiveFromHotPartition(queue, partition, maxMessages)
-            "warm" -> receiveFromWarmPartition(queue, partition, maxMessages)
-            "cold" -> receiveFromColdPartition(queue, partition, maxMessages)
-            else -> Flux.empty()
-        }.filter { message ->
-            // 메시지의 MessageGroupId가 요청한 것과 일치하는지 확인
-            val msgGroupId = message.messageGroupId ?: message.attributes["MessageGroupId"]
-            msgGroupId == messageGroupId
+            "COLD" -> {
+                // 로컬 스토리지에서 메시지 조회 (승격 없이 그대로 조회)
+                getMessageFromColdStorage(messageId)
+                    .doOnNext { logger.debug("COLD 스토리지에서 메시지 조회: messageId=$messageId") }
+            }
+
+            else -> {
+                logger.warn("알 수 없는 스토리지 위치: location=$location, messageId=$messageId")
+                Mono.empty()
+            }
         }
     }
 
     /**
-     * 메시지를 Hot Storage로 승격
+     * COLD 스토리지에서 메시지 조회 (실제 구현 필요)
      */
-    private fun promoteToHot(queue: Queue, messageId: String, partition: Int): Mono<Void> {
-        val hotKey = queue.getHotKey(partition)
-        val warmKey = queue.getWarmKey(partition)
-        val coldKey = queue.getColdKey(partition)
-
-        return redisTemplate.opsForZSet().remove(warmKey, messageId)
-            .then(redisTemplate.opsForZSet().remove(coldKey, messageId))
-            .then(redisTemplate.opsForList().rightPush(hotKey, messageId))
-            .then()
+    private fun getMessageFromColdStorage(messageId: String): Mono<Message> {
+        // TODO: 실제 COLD 스토리지 구현체와 연동
+        logger.warn("COLD 스토리지 조회 미구현: messageId=$messageId")
+        return Mono.empty()
     }
 
     /**
@@ -240,10 +275,10 @@ class UnifiedMessageService(
 }
 
 /**
- * Queue 확장 함수들 (파티션 지원)
+ * Queue 확장 함수들 (올바른 네이밍 - 실제 역할 반영)
  */
-private fun Queue.getHotKey(partition: Int): String = "hot:queue:$tenantId:${queueName}_partition_$partition"
-private fun Queue.getWarmKey(partition: Int): String = "warm:queue:$tenantId:${queueName}_partition_$partition"
-private fun Queue.getColdKey(partition: Int): String = "cold:queue:$tenantId:${queueName}_partition_$partition"
-private fun Queue.getDelayedKey(partition: Int): String = "delayed:queue:$tenantId:${queueName}_partition_$partition"
-private fun Queue.getInFlightKey(partition: Int): String = "inflight:queue:$tenantId:${queueName}_partition_$partition"
+private fun Queue.getHotKey(partition: Int): String = "queue:$tenantId:${queueName}_partition_$partition" // Available 큐 (메시지 ID 대기열)
+private fun Queue.getWarmKey(partition: Int): String = "storage:warm:$tenantId:${queueName}_partition_$partition" // WARM 스토리지 인덱스
+private fun Queue.getColdKey(partition: Int): String = "storage:cold:$tenantId:${queueName}_partition_$partition" // COLD 스토리지 인덱스
+private fun Queue.getDelayedKey(partition: Int): String = "delayed:$tenantId:${queueName}_partition_$partition"
+private fun Queue.getInFlightKey(partition: Int): String = "inflight:$tenantId:${queueName}_partition_$partition"

@@ -72,9 +72,6 @@ tasks.withType<Test> {
     systemProperty("junit.jupiter.execution.parallel.enabled", "true")
     systemProperty("junit.jupiter.execution.parallel.mode.default", "concurrent")
     
-    // 성능 테스트는 기본적으로 제외
-    exclude("**/performance/**")
-    
     // 테스트 분류
     testLogging {
         events("passed", "skipped", "failed")
@@ -88,7 +85,12 @@ tasks.withType<Test> {
 // 성능 테스트 전용 태스크
 tasks.register<Test>("performanceTest") {
     useJUnitPlatform()
-    include("**/performance/**")
+    
+    // 성능 테스트만 포함 (패키지 기반 필터링)
+    filter {
+        includeTestsMatching("*PerformanceTest*")
+        includeTestsMatching("com.example.sqs.performance.*")
+    }
     
     // 성능 테스트는 단독 실행
     maxParallelForks = 1
@@ -98,6 +100,15 @@ tasks.register<Test>("performanceTest") {
     
     group = "verification"
     description = "Runs performance tests"
+    
+    // 상세한 로깅
+    testLogging {
+        events("passed", "skipped", "failed", "standardOut", "standardError")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showExceptions = true
+        showCauses = true
+        showStackTraces = true
+    }
 }
 
 // 테스트 커버리지를 위한 JaCoCo 플러그인 (선택사항)

@@ -30,15 +30,15 @@ class HotStorageService(
     override val tier = StorageTier.HOT
 
     companion object {
-        private const val HOT_QUEUE_PREFIX = "hot:queue:"
+        private const val HOT_QUEUE_PREFIX = "queue:"
         private const val DEFAULT_TTL_HOURS = 1L
     }
 
     override suspend fun saveMessage(message: Message): Boolean {
         return try {
             val messageKey = redisKeyManager.getMessageKey(message.messageId)
-            val queueKey = redisKeyManager.getHotQueueKey(message.tenantId, message.queueName)
-            val indexKey = redisKeyManager.getHotIndexKey(message.tenantId, message.queueName)
+            val queueKey = redisKeyManager.getAvailableQueueKey(message.tenantId, message.queueName)
+            val indexKey = redisKeyManager.getQueueIndexKey(message.tenantId, message.queueName)
 
             val messageJson = objectMapper.writeValueAsString(message)
             val ttl = Duration.ofHours(DEFAULT_TTL_HOURS)

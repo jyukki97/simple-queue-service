@@ -35,7 +35,35 @@ class StorageStatsService(
      * Hot Storage 통계 정보 조회 (모든 큐 타입에서 파티션 사용)
      */
     fun getHotStats(queue: Queue): Mono<TierStats> {
-        return getPartitionedTierStats(queue, "HOT")
+        val partitionCount = 4 // 기본 파티션 수, 실제로는 설정에서 가져와야 함
+
+        return Flux.range(0, partitionCount)
+            .flatMap { partitionNumber ->
+                val tierKey = redisKeyManager.getAvailableQueueKey(queue, partitionNumber)
+                getSingleTierStats(tierKey, "HOT")
+            }
+            .reduce { stats1, stats2 ->
+                TierStats(
+                    tier = "HOT",
+                    messageCount = stats1.messageCount + stats2.messageCount,
+                    oldestMessageTime = if (stats1.oldestMessageTime != null && stats2.oldestMessageTime != null) {
+                        if (stats1.oldestMessageTime.isBefore(stats2.oldestMessageTime)) stats1.oldestMessageTime else stats2.oldestMessageTime
+                    } else stats1.oldestMessageTime ?: stats2.oldestMessageTime,
+                    newestMessageTime = null,
+                    totalSizeBytes = stats1.totalSizeBytes + stats2.totalSizeBytes
+                )
+            }
+            .switchIfEmpty(
+                Mono.just(
+                    TierStats(
+                        tier = "HOT",
+                        messageCount = 0,
+                        oldestMessageTime = null,
+                        newestMessageTime = null,
+                        totalSizeBytes = 0
+                    )
+                )
+            )
     }
 
     /**
@@ -137,43 +165,6 @@ class StorageStatsService(
     }
 
     /**
-     * 파티션된 큐의 티어 통계 조회 (FIFO와 Standard 모두 지원)
-     */
-    private fun getPartitionedTierStats(queue: Queue, tier: String): Mono<TierStats> {
-        val partitionCount = 4 // 기본 파티션 수, 실제로는 설정에서 가져와야 함
-        val tierPrefix = tier.lowercase()
-
-        return Flux.range(0, partitionCount)
-            .flatMap { partitionNumber ->
-                val partitionedQueueName = partitioningService.getPartitionedQueueName(queue.queueName, partitionNumber)
-                val tierKey = "${tierPrefix}:queue:${queue.tenantId}:${partitionedQueueName}"
-                getSingleTierStats(tierKey, tier)
-            }
-            .reduce { stats1, stats2 ->
-                TierStats(
-                    tier = tier,
-                    messageCount = stats1.messageCount + stats2.messageCount,
-                    oldestMessageTime = if (stats1.oldestMessageTime != null && stats2.oldestMessageTime != null) {
-                        if (stats1.oldestMessageTime.isBefore(stats2.oldestMessageTime)) stats1.oldestMessageTime else stats2.oldestMessageTime
-                    } else stats1.oldestMessageTime ?: stats2.oldestMessageTime,
-                    newestMessageTime = null,
-                    totalSizeBytes = stats1.totalSizeBytes + stats2.totalSizeBytes
-                )
-            }
-            .switchIfEmpty(
-                Mono.just(
-                    TierStats(
-                        tier = tier,
-                        messageCount = 0,
-                        oldestMessageTime = null,
-                        newestMessageTime = null,
-                        totalSizeBytes = 0
-                    )
-                )
-            )
-    }
-
-    /**
      * 메시지의 현재 위치 정보 조회
      */
     fun getMessageLocation(messageId: String): Mono<MessageLocation> {
@@ -270,7 +261,7 @@ class StorageStatsService(
         return Flux.range(0, partitionCount)
             .flatMap { partitionNumber ->
                 val partitionedQueueName = partitioningService.getPartitionedQueueName(queue.queueName, partitionNumber)
-                val tierKey = redisKeyManager.getHotQueueKey(queue.tenantId, partitionedQueueName)
+                val tierKey = redisKeyManager.getAvailableQueueKey(queue.tenantId, partitionedQueueName)
 
                 redisTemplate.opsForList()
                     .range(tierKey, 0, -1)

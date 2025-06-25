@@ -3,11 +3,17 @@ package com.example.sqs.performance.compression
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.test.context.ActiveProfiles
+import org.springframework.test.context.TestPropertySource
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 @SpringBootTest
+@ActiveProfiles("test")
+@TestPropertySource(properties = [
+    "app.metrics.enable-prometheus=false"
+])
 class MessageCompressionServiceTest {
     
     private val compressionService = MessageCompressionService()

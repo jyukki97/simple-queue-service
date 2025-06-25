@@ -2,10 +2,16 @@ package com.example.sqs.performance.partitioning
 
 import org.junit.jupiter.api.Test
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.test.context.ActiveProfiles
+import org.springframework.test.context.TestPropertySource
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 @SpringBootTest
+@ActiveProfiles("test")
+@TestPropertySource(properties = [
+    "app.metrics.enable-prometheus=false"
+])
 class QueuePartitioningServiceTest {
     
     private val partitioningService = QueuePartitioningService()

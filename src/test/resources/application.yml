@@ -2,21 +2,27 @@ spring:
   redis:
     host: localhost
     port: 6379
-    timeout: 1000ms
+    timeout: 2000ms  # 1000ms → 2000ms 증가
+    lettuce:
+      pool:
+        max-active: 30     # 기본값보다 증가
+        max-idle: 15       # 기본값보다 증가  
+        min-idle: 5        # 기본값보다 증가
+        max-wait: 2000ms   # 대기 시간 증가
     
 app:
   queue:
-    default-visibility-timeout: 30
+    default-visibility-timeout: 60  # 30 → 60초로 증가
     max-message-size: 262144
     max-messages-per-batch: 10
-    scheduler-interval: 5000  # 테스트에서는 5초로 단축
+    scheduler-interval: 60000  # 2초 → 60초로 늘려서 계층화 최소화
     default-message-retention-period: 3600  # 테스트에서는 1시간
-    max-receive-count: 3
-    partition-count: 4
+    max-receive-count: 5      # 3 → 5로 증가 (더 많은 재시도)
+    partition-count: 4        # 8 → 4로 감소 (단순화)
     enable-hot-warm-swap: false  # 테스트에서는 비활성화
     
   storage:
-    hot-ttl-hours: 1
+    hot-ttl-hours: 24      # Hot에서 더 오래 보관 (1→24시간)
     warm-ttl-hours: 2
     cold-path: "./test-data/cold-${random.uuid}"  # 테스트마다 고유한 경로
     warm-path: "./test-data/warm-${random.uuid}"  # 테스트마다 고유한 경로

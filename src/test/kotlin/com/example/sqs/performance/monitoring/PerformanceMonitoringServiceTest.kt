@@ -5,10 +5,16 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.test.context.ActiveProfiles
+import org.springframework.test.context.TestPropertySource
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 @SpringBootTest
+@ActiveProfiles("test")
+@TestPropertySource(properties = [
+    "app.metrics.enable-prometheus=false"
+])
 class PerformanceMonitoringServiceTest {
     
     private lateinit var meterRegistry: MeterRegistry

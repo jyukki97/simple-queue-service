@@ -103,7 +103,8 @@ class MessageService(
                     queue = queue,
                     maxMessages = request.maxNumberOfMessages,
                     visibilityTimeoutSeconds = request.visibilityTimeoutSeconds,
-                    messageGroupId = request.messageGroupId
+                    messageGroupId = request.messageGroupId,
+                    waitTimeSeconds = request.waitTimeSeconds
                 )
 
                 messageFlux.flatMap { message ->
