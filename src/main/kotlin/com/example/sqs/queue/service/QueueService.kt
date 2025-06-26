@@ -4,7 +4,6 @@ import com.example.sqs.common.exception.QueueNotFoundException
 import com.example.sqs.common.service.BaseReactiveService
 import com.example.sqs.queue.domain.Queue
 import com.example.sqs.queue.domain.QueueAttributes
-import com.example.sqs.queue.domain.QueueListResponse
 import com.example.sqs.queue.domain.QueueStatistics
 import com.example.sqs.queue.repository.QueueRepository
 import org.springframework.stereotype.Service
@@ -114,36 +113,6 @@ class QueueService(
                 queueRepository.getQueueStatistics(queue)
             }
             .onErrorResume(handleError("getQueueStatistics"))
-    }
-
-    /**
-     * 큐 존재 여부를 확인합니다
-     */
-    fun queueExists(tenantId: String, queueName: String): Mono<Boolean> {
-        return queueRepository.existsByTenantIdAndQueueName(tenantId, queueName)
-            .onErrorReturn(false)
-    }
-
-    /**
-     * 큐 목록을 페이징하여 조회합니다
-     */
-    fun getQueuesWithPaging(tenantId: String, pageSize: Int, pageToken: String?): Mono<QueueListResponse> {
-        val validPageSize = pageSize.coerceIn(1, 1000)
-        val offset = pageToken?.toIntOrNull() ?: 0
-
-        return findQueuesByTenant(tenantId, validPageSize + 1, offset)
-            .collectList()
-            .map { queues ->
-                val hasMore = queues.size > validPageSize
-                val resultQueues = if (hasMore) queues.dropLast(1) else queues
-                val nextPageToken = if (hasMore) (offset + validPageSize).toString() else null
-
-                QueueListResponse(
-                    queues = resultQueues,
-                    nextPageToken = nextPageToken
-                )
-            }
-            .onErrorResume(handleError("getQueuesWithPaging"))
     }
 
     /**

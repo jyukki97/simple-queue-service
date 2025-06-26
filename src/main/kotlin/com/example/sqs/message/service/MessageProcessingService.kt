@@ -3,7 +3,6 @@ package com.example.sqs.message.service
 import com.example.sqs.common.service.BaseReactiveService
 import com.example.sqs.config.QueueProperties
 import com.example.sqs.performance.compression.MessageCompressionService
-import com.example.sqs.performance.partitioning.QueuePartitioningService
 import org.springframework.stereotype.Service
 import kotlin.math.abs
 
@@ -13,7 +12,6 @@ import kotlin.math.abs
 @Service
 class MessageProcessingService(
     private val compressionService: MessageCompressionService,
-    private val partitioningService: QueuePartitioningService,
     private val queueProperties: QueueProperties
 ) : BaseReactiveService() {
 
@@ -40,17 +38,6 @@ class MessageProcessingService(
             compressionService.decompress(compressedData)
         } else {
             messageBody
-        }
-    }
-
-    /**
-     * 메시지 파티션 결정
-     */
-    fun getPartitionForMessage(messageBody: String): Int {
-        return if (queueProperties.enablePartitioning) {
-            partitioningService.getPartitionNumber(messageBody, queueProperties.partitionCount)
-        } else {
-            0
         }
     }
 

@@ -309,122 +309,6 @@ class RocksDBWarmStorageService(
     }
 
     /**
-     * 디버그: RocksDB의 모든 메시지 정보 조회
-     */
-    fun debugAllMessages(): Mono<List<Map<String, Any>>> {
-        return Mono.fromCallable {
-            val messageInfos = mutableListOf<Map<String, Any>>()
-
-            try {
-                val iterator = rocksDB.newIterator()
-                iterator.seekToFirst()
-
-                while (iterator.isValid()) {
-                    val key = String(iterator.key())
-
-                    if (key.startsWith(MESSAGE_PREFIX)) {
-                        try {
-                            val messageId = key.removePrefix(MESSAGE_PREFIX)
-                            val messageJson = String(iterator.value())
-                            val message = objectMapper.readValue(messageJson, Message::class.java)
-
-                            messageInfos.add(
-                                mapOf(
-                                    "messageId" to messageId,
-                                    "tenantId" to message.tenantId,
-                                    "queueName" to message.queueName,
-                                    "isExpired" to isExpired(messageId),
-                                    "messageBodyStart" to message.messageBody.take(50)
-                                )
-                            )
-                        } catch (e: Exception) {
-                            messageInfos.add(
-                                mapOf(
-                                    "messageId" to key.removePrefix(MESSAGE_PREFIX),
-                                    "error" to "파싱 실패: ${e.message}"
-                                )
-                            )
-                        }
-                    }
-
-                    iterator.next()
-                }
-
-                iterator.close()
-
-            } catch (e: Exception) {
-                logger.error("디버그 모든 메시지 조회 실패", e)
-            }
-
-            messageInfos.toList()
-        }.subscribeOn(Schedulers.boundedElastic())
-    }
-
-    /**
-     * 디버그: 처음 몇 개 메시지의 큐 이름 확인
-     */
-    fun debugFirstFewMessages(count: Int = 5): Mono<List<Map<String, String>>> {
-        return Mono.fromCallable {
-            val messageInfos = mutableListOf<Map<String, String>>()
-
-            try {
-                logger.info("RocksDB 디버그 시작: 처음 ${count}개 메시지 조회")
-                val iterator = rocksDB.newIterator()
-                iterator.seekToFirst()
-
-                var processedCount = 0
-                while (iterator.isValid() && messageInfos.size < count && processedCount < 100) {
-                    val key = String(iterator.key())
-                    processedCount++
-
-                    if (key.startsWith(MESSAGE_PREFIX)) {
-                        try {
-                            val messageJson = String(iterator.value())
-                            val message = objectMapper.readValue(messageJson, Message::class.java)
-
-                            messageInfos.add(
-                                mapOf(
-                                    "messageId" to message.messageId,
-                                    "queueName" to message.queueName,
-                                    "tenantId" to message.tenantId,
-                                    "messageBody" to message.messageBody.take(50),
-                                    "keyInDB" to key
-                                )
-                            )
-                            logger.info("메시지 발견: ${message.messageId}, 큐: ${message.queueName}")
-                        } catch (e: Exception) {
-                            logger.warn("메시지 파싱 실패: $key", e)
-                            messageInfos.add(
-                                mapOf(
-                                    "error" to "파싱 실패",
-                                    "key" to key,
-                                    "errorMessage" to (e.message ?: "알 수 없는 오류")
-                                )
-                            )
-                        }
-                    }
-
-                    iterator.next()
-                }
-
-                iterator.close()
-                logger.info("RocksDB 디버그 완료: ${messageInfos.size}개 메시지 조회됨")
-
-            } catch (e: Exception) {
-                logger.error("디버그 메시지 조회 실패", e)
-                messageInfos.add(
-                    mapOf(
-                        "fatalError" to "RocksDB 접근 실패",
-                        "errorMessage" to (e.message ?: "알 수 없는 오류")
-                    )
-                )
-            }
-
-            messageInfos.toList()
-        }.subscribeOn(Schedulers.boundedElastic())
-    }
-
-    /**
      * 큐의 가장 오래된 메시지 ID들을 가져옴 (FIFO 순서)
      */
     fun getOldestMessageIds(tenantId: String, queueName: String, count: Int): Flux<String> {
@@ -532,13 +416,6 @@ class RocksDBWarmStorageService(
         }
             .subscribeOn(Schedulers.boundedElastic())
             .flatMapIterable { expiredIdList -> expiredIdList }
-    }
-
-    /**
-     * 모든 메시지 ID 목록 조회 (내부용)
-     */
-    private fun getAllMessageIds(): List<String> {
-        return ttlIndex.keys.toList()
     }
 
     /**

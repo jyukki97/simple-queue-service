@@ -9,21 +9,21 @@ import kotlin.math.abs
  */
 @Component
 class QueuePartitioningService {
-    
+
     /**
      * 메시지 키 기반으로 파티션 번호 결정
      */
     fun getPartitionNumber(messageKey: String, partitionCount: Int): Int {
         return abs(messageKey.hashCode()) % partitionCount
     }
-    
+
     /**
      * 큐 이름에 파티션 번호 추가
      */
     fun getPartitionedQueueName(queueName: String, partitionNumber: Int): String {
         return "${queueName}_partition_${partitionNumber}"
     }
-    
+
     /**
      * 파티션된 큐 이름들 생성
      */
@@ -32,14 +32,14 @@ class QueuePartitioningService {
             getPartitionedQueueName(queueName, partitionNumber)
         }
     }
-    
+
     /**
      * 라운드 로빈 방식으로 파티션 선택
      */
     fun getRoundRobinPartition(counter: Long, partitionCount: Int): Int {
         return (counter % partitionCount).toInt()
     }
-    
+
     /**
      * 파티션별 로드 밸런싱을 위한 가중치 계산
      */
@@ -50,13 +50,3 @@ class QueuePartitioningService {
         return (0 until partitionCount).associateWith { weight }
     }
 }
-
-/**
- * 파티션 정보를 담는 데이터 클래스
- */
-data class PartitionInfo(
-    val partitionNumber: Int,
-    val queueName: String,
-    val messageCount: Long = 0,
-    val lastAccessTime: Long = System.currentTimeMillis()
-)

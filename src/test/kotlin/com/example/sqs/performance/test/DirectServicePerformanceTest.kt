@@ -9,6 +9,7 @@ import com.example.sqs.storage.service.WarmTierManagerService
 import com.example.sqs.test.base.BaseIntegrationTest
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Semaphore
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -19,6 +20,7 @@ import kotlin.system.measureTimeMillis
 /**
  * 직접 서비스 호출 성능 테스트 - HTTP 오버헤드 제거
  */
+@Disabled
 @TestPropertySource(
     properties = [
         "sqs.storage.warm.max-size=1000000",

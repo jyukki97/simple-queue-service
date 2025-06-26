@@ -107,28 +107,6 @@ class StorageController(
     }
 
     /**
-     * 수동 메시지 승격
-     */
-    @PostMapping("/messages/{messageId}/promote")
-    fun promoteMessage(
-        @PathVariable messageId: String,
-        @RequestBody request: PromoteMessageRequest
-    ): Mono<PromoteMessageResponse> {
-        val tenantId = AuthContext.getCurrentTenantId()
-
-        return storageStatsService.promoteMessage(messageId, request.targetTier, tenantId)
-            .map { result ->
-                PromoteMessageResponse(
-                    messageId = messageId,
-                    fromTier = result.fromTier,
-                    toTier = result.toTier,
-                    success = result.success,
-                    reason = request.reason
-                )
-            }
-    }
-
-    /**
      * 특정 스토리지 계층의 메시지 목록 조회
      */
     @GetMapping("/queues/{queueName}/tiers/{tier}/messages")
@@ -169,8 +147,8 @@ class StorageController(
             .flatMap { queue ->
                 Mono.zip(
                     storageStatsService.getHotStats(queue),
-                    storageStatsService.getWarmStats(queue),
-                    storageStatsService.getColdStats(queue),
+                    storageStatsService.getStatsByActualStorage(queue, "WARM"),
+                    storageStatsService.getStatsByActualStorage(queue, "COLD"),
                     storageStatsService.getMessagesByTier(queue, "HOT", 5, 0),
                     storageStatsService.getMessagesByTier(queue, "WARM", 5, 0),
                     storageStatsService.getMessagesByTier(queue, "COLD", 5, 0)

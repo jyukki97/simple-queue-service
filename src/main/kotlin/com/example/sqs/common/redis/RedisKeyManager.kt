@@ -75,6 +75,12 @@ class RedisKeyManager {
         "${PROCESSING_QUEUE_PREFIX}${tenantId}:${queueName}${PARTITION_SUFFIX}${partition}"
 
     /**
+     * 처리 중 메시지 파티션 큐 키 (Queue 객체 사용)
+     */
+    fun getProcessingQueueKey(queue: Queue, partition: Int): String =
+        getProcessingQueueKey(queue.tenantId, queue.queueName, partition)
+
+    /**
      * 지연 메시지 큐 키: delayed:{tenantId}:{queueName}
      */
     fun getDelayedQueueKey(tenantId: String, queueName: String): String =
@@ -85,6 +91,12 @@ class RedisKeyManager {
      */
     fun getDelayedQueueKey(tenantId: String, queueName: String, partition: Int): String =
         "${DELAYED_QUEUE_PREFIX}${tenantId}:${queueName}${PARTITION_SUFFIX}${partition}"
+
+    /**
+     * 지연 메시지 파티션 큐 키 (Queue 객체 사용)
+     */
+    fun getDelayedQueueKey(queue: Queue, partition: Int): String =
+        getDelayedQueueKey(queue.tenantId, queue.queueName, partition)
 
     /**
      * DLQ (Dead Letter Queue) 키: dlq:{tenantId}:{queueName}
@@ -105,6 +117,20 @@ class RedisKeyManager {
      */
     fun getMessageIndexKey(tenantId: String, queueName: String): String =
         "${MESSAGE_INDEX_PREFIX}${tenantId}:${queueName}"
+
+    // ===== Tier Index Keys =====
+
+    /**
+     * 계층별 메시지 인덱스 키: tier:index:{tier}:{tenantId}:{queueName}
+     */
+    fun getTierIndexKey(tier: String, tenantId: String, queueName: String): String =
+        "tier:index:${tier}:${tenantId}:${queueName}"
+
+    /**
+     * 계층별 메시지 인덱스 키 (Queue 객체 사용)
+     */
+    fun getTierIndexKey(tier: String, queue: Queue): String =
+        getTierIndexKey(tier, queue.tenantId, queue.queueName)
 
     // ===== Metadata Keys =====
 

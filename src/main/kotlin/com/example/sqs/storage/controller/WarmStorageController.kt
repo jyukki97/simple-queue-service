@@ -114,28 +114,6 @@ class WarmStorageController(
     }
 
     /**
-     * 디버그: 모든 메시지 정보 조회
-     */
-    @GetMapping("/debug/all-messages")
-    fun debugAllMessages(): Mono<ApiResponse<List<Map<String, Any>>>> {
-        return warmTierManager.debugAllMessages()
-            .map { messages ->
-                ApiResponse.success(messages, "모든 메시지 정보 조회 성공")
-            }
-    }
-
-    /**
-     * 디버그: 처음 몇 개 메시지 정보 확인
-     */
-    @GetMapping("/debug/first-messages")
-    fun debugFirstMessages(
-        @RequestParam(defaultValue = "5") count: Int
-    ): Mono<ApiResponse<List<Map<String, String>>>> {
-        return warmTierManager.debugFirstFewMessages(count)
-            .map { messages -> ApiResponse.success(messages) }
-    }
-
-    /**
      * 만료된 메시지 정리
      */
     @PostMapping("/cleanup")

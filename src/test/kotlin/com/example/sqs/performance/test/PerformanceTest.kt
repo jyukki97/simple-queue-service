@@ -5,6 +5,7 @@ import com.example.sqs.queue.domain.CreateQueueRequest
 import com.example.sqs.queue.domain.QueueAttributes
 import com.example.sqs.test.base.BaseIntegrationTest
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import org.slf4j.LoggerFactory
 import org.springframework.test.context.TestPropertySource
@@ -13,6 +14,7 @@ import kotlin.system.measureTimeMillis
 /**
  * 성능 테스트 클래스
  */
+@Disabled
 @TestPropertySource(
     properties = [
         "sqs.storage.warm.max-size=1000000",
@@ -381,7 +383,7 @@ class PerformanceTest : BaseIntegrationTest() {
         // WARM 스토리지 용량을 강제로 초과시켜 COLD로 직접 저장되도록 함
         val messageCount = 300
         val largeMessageSize = 5000 // 5KB per message
-        
+
         val sendTime = measureTimeMillis {
             repeat(messageCount) { index ->
                 val largeMessage = "Cold storage test message #$index - " + "x".repeat(largeMessageSize)

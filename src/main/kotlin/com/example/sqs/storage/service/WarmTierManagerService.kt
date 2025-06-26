@@ -23,7 +23,8 @@ class WarmTierManagerService(
     private val redisTemplate: ReactiveRedisTemplate<String, String>,
     private val rocksDBService: RocksDBWarmStorageService,
     private val objectMapper: ObjectMapper,
-    private val redisKeyManager: RedisKeyManager
+    private val redisKeyManager: RedisKeyManager,
+    private val storageStatsService: StorageStatsService
 ) {
 
     private val logger = LoggerFactory.getLogger(WarmTierManagerService::class.java)
@@ -39,6 +40,14 @@ class WarmTierManagerService(
         return getMessageFromRedis(messageId)
             .flatMap { message ->
                 if (message != null) {
+                    val queue = com.example.sqs.queue.domain.Queue(
+                        tenantId = tenantId,
+                        queueName = queueName,
+                        attributes = com.example.sqs.queue.domain.QueueAttributes(),
+                        createdAt = Instant.now(),
+                        updatedAt = Instant.now()
+                    )
+
                     // RocksDB에 저장
                     rocksDBService.saveMessage(message, WARM_TTL_HOURS)
                         .flatMap { saved ->
@@ -46,6 +55,10 @@ class WarmTierManagerService(
                                 // Redis에서 제거
                                 removeMessageFromRedis(messageId, tenantId, queueName)
                                     .then(updateMessageLocation(messageId, StorageTier.WARM))
+                                    .then(
+                                        // tier index 업데이트: HOT → WARM
+                                        storageStatsService.updateTierIndex(messageId, queue, "HOT", "WARM")
+                                    )
                                     .map { true }
                             } else {
                                 Mono.just(false)
@@ -66,6 +79,14 @@ class WarmTierManagerService(
      * 배치로 메시지를 WARM 계층으로 이동
      */
     fun moveMessagesToWarmBatch(messageIds: List<String>, tenantId: String, queueName: String): Mono<BatchMoveResult> {
+        val queue = com.example.sqs.queue.domain.Queue(
+            tenantId = tenantId,
+            queueName = queueName,
+            attributes = com.example.sqs.queue.domain.QueueAttributes(),
+            createdAt = Instant.now(),
+            updatedAt = Instant.now()
+        )
+
         return Flux.fromIterable(messageIds)
             .flatMap { messageId ->
                 getMessageFromRedis(messageId)
@@ -88,6 +109,14 @@ class WarmTierManagerService(
                             val successfulMessageIds = validMessages.map { it.messageId }
                             removeMessagesFromRedisBatch(successfulMessageIds, tenantId, queueName)
                                 .then(updateMessageLocationsBatch(successfulMessageIds, StorageTier.WARM))
+                                .then(
+                                    // 배치 tier index 업데이트: HOT → WARM
+                                    Flux.fromIterable(successfulMessageIds)
+                                        .flatMap { messageId ->
+                                            storageStatsService.updateTierIndex(messageId, queue, "HOT", "WARM")
+                                        }
+                                        .then()
+                                )
                                 .then(
                                     Mono.just(
                                         BatchMoveResult(
@@ -116,13 +145,38 @@ class WarmTierManagerService(
      * WARM 계층에서 메시지 삭제
      */
     fun deleteMessageFromWarm(messageId: String): Mono<Boolean> {
-        return rocksDBService.deleteMessage(messageId)
-            .flatMap { deleted ->
-                if (deleted) {
-                    // 위치 정보도 제거
-                    removeMessageLocation(messageId)
-                        .map { true }
+        // 먼저 메시지 정보를 조회하여 큐 정보 확보
+        return getMessageFromWarm(messageId)
+            .flatMap { message ->
+                if (message != null) {
+                    val queue = com.example.sqs.queue.domain.Queue(
+                        tenantId = message.tenantId,
+                        queueName = message.queueName,
+                        attributes = com.example.sqs.queue.domain.QueueAttributes(),
+                        createdAt = Instant.now(),
+                        updatedAt = Instant.now()
+                    )
+
+                    rocksDBService.deleteMessage(messageId)
+                        .flatMap { deleted ->
+                            if (deleted) {
+                                // 위치 정보 제거
+                                removeMessageLocation(messageId)
+                                    .then(
+                                        // tier index에서 WARM 제거
+                                        storageStatsService.updateTierIndex(messageId, queue, "WARM", null)
+                                            .onErrorResume {
+                                                logger.warn("Tier index 제거 실패: $messageId", it)
+                                                Mono.empty()
+                                            }
+                                    )
+                                    .map { true }
+                            } else {
+                                Mono.just(false)
+                            }
+                        }
                 } else {
+                    logger.warn("삭제할 메시지를 찾을 수 없음: $messageId")
                     Mono.just(false)
                 }
             }
@@ -152,20 +206,6 @@ class WarmTierManagerService(
         // RocksDB에서 직접 큐 이름과 파티션 패턴 매칭으로 검색
         // getMessagesByQueue 메서드가 이미 파티션 패턴을 처리하므로 한 번만 호출
         return rocksDBService.getMessagesByQueue(tenantId, queueName, limit, offset)
-    }
-
-    /**
-     * 디버그: 모든 메시지 정보 조회
-     */
-    fun debugAllMessages(): Mono<List<Map<String, Any>>> {
-        return rocksDBService.debugAllMessages()
-    }
-
-    /**
-     * 디버그: 처음 몇 개 메시지 정보 확인
-     */
-    fun debugFirstFewMessages(count: Int = 5): Mono<List<Map<String, String>>> {
-        return rocksDBService.debugFirstFewMessages(count)
     }
 
     /**

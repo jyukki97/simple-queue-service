@@ -1,6 +1,7 @@
 package com.example.sqs.queue.repository
 
 import com.example.sqs.queue.domain.Queue
+import com.example.sqs.queue.domain.QueueAttributes
 import com.example.sqs.queue.domain.QueueStatistics
 import com.example.sqs.queue.domain.QueueStatsResponse
 import com.example.sqs.storage.service.RocksDBWarmStorageService
@@ -12,6 +13,7 @@ import org.springframework.data.redis.core.ReactiveRedisTemplate
 import org.springframework.stereotype.Repository
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
+import reactor.core.scheduler.Schedulers
 import java.time.Instant
 
 @Repository
@@ -54,7 +56,7 @@ class RedisQueueRepository(
             .map { queueData ->
                 val attributes = objectMapper.readValue(
                     queueData["attributes"] as String,
-                    com.example.sqs.queue.domain.QueueAttributes::class.java
+                    QueueAttributes::class.java
                 )
 
                 Queue(
@@ -117,7 +119,7 @@ class RedisQueueRepository(
         val delayedKey = queue.getDelayedKey()
         val inFlightKey = queue.getInFlightKey()
 
-        return Mono.`when`(
+        return Mono.whenDelayError(
             redisTemplate.delete(key),
             redisTemplate.opsForSet().remove(tenantQueuesKey, queue.queueName),
             redisTemplate.delete(messagesKey),
@@ -175,7 +177,7 @@ class RedisQueueRepository(
                 logger.warn("WARM 메시지 수 조회 중 오류 발생: ${e.message}")
                 0L
             }
-        }.subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+        }.subscribeOn(Schedulers.boundedElastic())
 
         // COLD 계층(FileSystem) 메시지 수 조회
         val coldMessagesMono = Mono.fromCallable {
@@ -187,7 +189,7 @@ class RedisQueueRepository(
                 logger.warn("COLD 메시지 수 조회 중 오류 발생: ${e.message}")
                 0L
             }
-        }.subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+        }.subscribeOn(Schedulers.boundedElastic())
 
         // 지연된 메시지와 처리 중인 메시지는 기존 방식 유지
         val delayedKey = queue.getDelayedKey()
@@ -240,7 +242,7 @@ class RedisQueueRepository(
                 logger.warn("WARM 최오래된 메시지 시간 조회 중 오류 발생: ${e.message}")
                 null
             }
-        }.subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+        }.subscribeOn(Schedulers.boundedElastic())
 
         // COLD에서 가장 오래된 메시지 조회
         val coldOldestMono = Mono.fromCallable {
@@ -250,7 +252,7 @@ class RedisQueueRepository(
                 logger.warn("COLD 최오래된 메시지 시간 조회 중 오류 발생: ${e.message}")
                 null
             }
-        }.subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+        }.subscribeOn(Schedulers.boundedElastic())
 
         // HOT, WARM, COLD에서 가장 오래된 메시지 비교
         val oldestMessageMono = Mono.zip(hotOldestMono, warmOldestMono, coldOldestMono)
@@ -311,7 +313,7 @@ class RedisQueueRepository(
         val delayedKey = queue.getDelayedKey()
         val inFlightKey = queue.getInFlightKey()
 
-        return Mono.`when`(
+        return Mono.whenDelayError(
             redisTemplate.delete(messagesKey),
             redisTemplate.delete(delayedKey),
             redisTemplate.delete(inFlightKey)

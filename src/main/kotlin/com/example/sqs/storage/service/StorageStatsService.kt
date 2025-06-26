@@ -8,7 +8,6 @@ import com.example.sqs.queue.domain.Queue
 import com.example.sqs.storage.domain.MessageLocation
 import com.example.sqs.storage.domain.StorageTier
 import com.example.sqs.storage.domain.TierStats
-import com.example.sqs.storage.dto.PromoteResult
 import com.example.sqs.storage.dto.TierMessageInfo
 import com.example.sqs.storage.service.impl.ColdStorageService
 import kotlinx.coroutines.reactor.mono
@@ -24,7 +23,7 @@ import java.time.Instant
 class StorageStatsService(
     private val redisTemplate: ReactiveRedisTemplate<String, String>,
     private val partitioningService: QueuePartitioningService,
-    private val warmTierManagerService: WarmTierManagerService,
+    @Lazy private val warmTierManagerService: WarmTierManagerService,
     private val redisKeyManager: RedisKeyManager,
     @Lazy private val coldStorageService: ColdStorageService
 ) {
@@ -67,66 +66,159 @@ class StorageStatsService(
     }
 
     /**
-     * Warm Storage 통계 정보 조회 (RocksDB 사용)
+     * Warm Storage 통계 정보 조회 - 실제 스토리지에서 직접 조회
      */
     fun getWarmStats(queue: Queue): Mono<TierStats> {
-        // 큐별 WARM 메시지 개수 조회
-        return warmTierManagerService.getWarmMessagesByQueue(queue.tenantId, queue.queueName, Int.MAX_VALUE, 0)
-            .collectList()
-            .map { messages ->
-                val messageCount = messages.size.toLong()
-                val totalSizeBytes = messages.sumOf { it.messageBody.length.toLong() }
+        return getStatsByActualStorage(queue, "WARM")
+    }
 
+    /**
+     * Cold Storage 통계 정보 조회 - 실제 스토리지에서 직접 조회
+     */
+    fun getColdStats(queue: Queue): Mono<TierStats> {
+        return getStatsByActualStorage(queue, "COLD")
+    }
+
+    /**
+     * 계층별 통계 조회 - 실제 스토리지에서 직접 통계 수집
+     * 스케줄러와 API 모두에서 정확한 데이터를 위해 실제 스토리지에서 조회
+     */
+    fun getStatsByActualStorage(queue: Queue, tier: String): Mono<TierStats> {
+        return when (tier.uppercase()) {
+            "HOT" -> getHotTierStats(queue)
+            "WARM" -> getWarmTierStats(queue)
+            "COLD" -> getColdTierStats(queue)
+            else -> Mono.just(createEmptyTierStats(tier))
+        }
+    }
+
+    /**
+     * HOT 계층 통계 - Redis에서 직접 조회
+     */
+    private fun getHotTierStats(queue: Queue): Mono<TierStats> {
+        val partitionCount = 4
+
+        return Flux.range(0, partitionCount)
+            .flatMap { partitionNumber ->
+                val partitionedQueueName = partitioningService.getPartitionedQueueName(queue.queueName, partitionNumber)
+                val tierKey = redisKeyManager.getAvailableQueueKey(queue.tenantId, partitionedQueueName)
+
+                redisTemplate.opsForList()
+                    .range(tierKey, 0, -1)
+                    .flatMap { messageId ->
+                        getMessageStatsInfo(messageId, emptyMap())
+                    }
+            }
+            .collectList()
+            .map { messageStats ->
                 TierStats(
-                    tier = "WARM",
-                    messageCount = messageCount,
-                    oldestMessageTime = messages.minByOrNull { it.sentTimestamp }?.sentTimestamp,
-                    newestMessageTime = messages.maxByOrNull { it.sentTimestamp }?.sentTimestamp,
-                    totalSizeBytes = totalSizeBytes
+                    tier = "HOT",
+                    messageCount = messageStats.size.toLong(),
+                    oldestMessageTime = messageStats.mapNotNull { it.sentTime }.minOrNull(),
+                    newestMessageTime = messageStats.mapNotNull { it.sentTime }.maxOrNull(),
+                    totalSizeBytes = messageStats.sumOf { it.sizeBytes }
                 )
             }
-            .onErrorReturn(
+            .onErrorReturn(createEmptyTierStats("HOT"))
+    }
+
+    /**
+     * WARM 계층 통계 - RocksDB에서 직접 조회
+     */
+    private fun getWarmTierStats(queue: Queue): Mono<TierStats> {
+        return warmTierManagerService.getWarmMessagesByQueue(queue.tenantId, queue.queueName, 10000, 0)
+            .collectList()
+            .map { warmMessages ->
                 TierStats(
                     tier = "WARM",
-                    messageCount = 0,
-                    oldestMessageTime = null,
-                    newestMessageTime = null,
-                    totalSizeBytes = 0
+                    messageCount = warmMessages.size.toLong(),
+                    oldestMessageTime = warmMessages.mapNotNull { it.sentTimestamp }.minOrNull(),
+                    newestMessageTime = warmMessages.mapNotNull { it.sentTimestamp }.maxOrNull(),
+                    totalSizeBytes = warmMessages.sumOf { it.messageBody.length.toLong() }
+                )
+            }
+            .onErrorReturn(createEmptyTierStats("WARM"))
+    }
+
+    /**
+     * COLD 계층 통계 - 파일 시스템에서 직접 조회
+     */
+    private fun getColdTierStats(queue: Queue): Mono<TierStats> {
+        return mono {
+            try {
+                val messages = coldStorageService.getMessages(queue.queueName, 10000)
+                TierStats(
+                    tier = "COLD",
+                    messageCount = messages.size.toLong(),
+                    oldestMessageTime = messages.mapNotNull { it.sentTimestamp }.minOrNull(),
+                    newestMessageTime = messages.mapNotNull { it.sentTimestamp }.maxOrNull(),
+                    totalSizeBytes = messages.sumOf { it.messageBody.length.toLong() }
+                )
+            } catch (e: Exception) {
+                createEmptyTierStats("COLD")
+            }
+        }
+    }
+
+    /**
+     * 빈 통계 생성
+     */
+    private fun createEmptyTierStats(tier: String): TierStats {
+        return TierStats(
+            tier = tier,
+            messageCount = 0,
+            oldestMessageTime = null,
+            newestMessageTime = null,
+            totalSizeBytes = 0
+        )
+    }
+
+    /**
+     * 메시지 계층 이동 시 위치 정보만 업데이트 (tier:index 제거됨)
+     * 실제 스토리지에서 직접 조회하므로 별도 인덱스 불필요
+     */
+    fun updateTierIndex(messageId: String, queue: Queue, fromTier: String?, toTier: String?): Mono<Void> {
+        // tier:index는 더 이상 사용하지 않으므로 빈 Mono 반환
+        // 실제로는 message:location만 업데이트하면 충분
+        return Mono.empty()
+    }
+
+    /**
+     * 메시지 통계 정보 조회
+     */
+    private fun getMessageStatsInfo(messageId: String, locationData: Map<String, String>): Mono<MessageStatsInfo> {
+        return redisTemplate.opsForValue()
+            .get(redisKeyManager.getMessageKey(messageId))
+            .map { messageJson ->
+                val messageData = MessageParsingUtils.parseMessageData(messageJson)
+                val body = messageData?.get("messageBody")?.toString() ?: ""
+                val sentTime = messageData?.get("sentTimestamp")?.let {
+                    MessageParsingUtils.parseTimestampValue(it)
+                }
+
+                MessageStatsInfo(
+                    messageId = messageId,
+                    sizeBytes = body.length.toLong(),
+                    sentTime = sentTime
+                )
+            }
+            .defaultIfEmpty(
+                MessageStatsInfo(
+                    messageId = messageId,
+                    sizeBytes = 0L,
+                    sentTime = null
                 )
             )
     }
 
     /**
-     * Cold Storage 통계 정보 조회 (파일 시스템 기반)
+     * 메시지 통계 정보 데이터 클래스
      */
-    fun getColdStats(queue: Queue): Mono<TierStats> {
-        return mono {
-            // ColdStorageService에서 직접 메시지 조회
-            val messages = coldStorageService.getMessages(queue.queueName, Int.MAX_VALUE)
-
-            val messageCount = messages.size.toLong()
-            val totalSizeBytes = messages.sumOf { it.messageBody.length.toLong() }
-            val oldestMessageTime = messages.minByOrNull { it.sentTimestamp }?.sentTimestamp
-            val newestMessageTime = messages.maxByOrNull { it.sentTimestamp }?.sentTimestamp
-
-            TierStats(
-                tier = "COLD",
-                messageCount = messageCount,
-                oldestMessageTime = oldestMessageTime,
-                newestMessageTime = newestMessageTime,
-                totalSizeBytes = totalSizeBytes
-            )
-        }
-            .onErrorReturn(
-                TierStats(
-                    tier = "COLD",
-                    messageCount = 0,
-                    oldestMessageTime = null,
-                    newestMessageTime = null,
-                    totalSizeBytes = 0
-                )
-            )
-    }
+    private data class MessageStatsInfo(
+        val messageId: String,
+        val sizeBytes: Long,
+        val sentTime: Instant?
+    )
 
     /**
      * 메시지 개수 조회
@@ -195,41 +287,6 @@ class StorageStatsService(
                     createdAt = Instant.now()
                 )
             )
-    }
-
-    /**
-     * 메시지를 지정된 계층으로 승격
-     */
-    fun promoteMessage(messageId: String, targetTier: String, tenantId: String): Mono<PromoteResult> {
-        return redisTemplate.opsForHash<String, String>()
-            .get(redisKeyManager.getMessageKey(messageId), "tier")
-            .flatMap { currentTier ->
-                if (currentTier == targetTier) {
-                    Mono.just(PromoteResult(currentTier, targetTier, false))
-                } else {
-                    performMessagePromotion(messageId, currentTier, targetTier, tenantId)
-                        .map { PromoteResult(currentTier, targetTier, it) }
-                }
-            }
-            .defaultIfEmpty(PromoteResult("UNKNOWN", targetTier, false))
-    }
-
-    /**
-     * 실제 메시지 승격 수행
-     */
-    private fun performMessagePromotion(messageId: String, fromTier: String, toTier: String, tenantId: String): Mono<Boolean> {
-        // 실제 구현에서는 메시지가 속한 큐를 찾아서 이관해야 함
-        // 여기서는 간단하게 메시지 메타데이터만 업데이트
-        return redisTemplate.opsForHash<String, String>()
-            .putAll(
-                redisKeyManager.getMessageKey(messageId), mapOf(
-                    "tier" to toTier,
-                    "movedAt" to Instant.now().toString(),
-                    "promotedManually" to "true"
-                )
-            )
-            .map { true }
-            .onErrorReturn(false)
     }
 
     /**
@@ -479,6 +536,7 @@ class StorageStatsService(
                                     .flatMap { messageId ->
                                         warmTierManagerService.deleteMessageFromWarm(messageId)
                                             .then(updateMessageTier(messageId, "COLD"))
+                                            .then(updateTierIndex(messageId, queue, "WARM", "COLD"))
                                     }
                                     .count()
                                     .doOnSuccess { removedCount ->
@@ -495,5 +553,4 @@ class StorageStatsService(
                 }
             }
     }
-
 }

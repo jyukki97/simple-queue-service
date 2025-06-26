@@ -7,6 +7,7 @@ import com.example.sqs.queue.domain.QueueCleanupResult
 import com.example.sqs.storage.service.WarmTierManagerService
 import com.example.sqs.storage.service.impl.ColdStorageService
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.context.annotation.Lazy
 import org.springframework.data.redis.core.ReactiveRedisTemplate
 import org.springframework.stereotype.Service
 import reactor.core.publisher.Mono
@@ -16,8 +17,8 @@ import reactor.core.publisher.Mono
  */
 @Service
 class QueueCleanupService(
-    private val warmTierManagerService: WarmTierManagerService,
-    private val coldStorageService: ColdStorageService,
+    @Lazy private val warmTierManagerService: WarmTierManagerService,
+    @Lazy private val coldStorageService: ColdStorageService,
     private val redisKeyManager: RedisKeyManager,
     private val redisTemplate: ReactiveRedisTemplate<String, String>,
     @Value("\${app.queue.partition-count:4}") private val partitionCount: Int

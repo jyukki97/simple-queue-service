@@ -26,15 +26,8 @@ class UnifiedStorageService(
      */
     suspend fun deleteMessage(messageId: String): Boolean {
         val location = tieringManager.getMessageLocation(messageId)
-        if (location != null) {
-            val storageService = getStorageService(location.tier)
-            return storageService.deleteMessage(messageId)
-        }
-
-        // 위치 정보가 없으면 모든 계층에서 삭제 시도
-        return hotStorage.deleteMessage(messageId) ||
-                warmStorage.deleteMessage(messageId) ||
-                coldStorage.deleteMessage(messageId)
+        val storageService = getStorageService(location.tier)
+        return storageService.deleteMessage(messageId)
     }
 
     /**

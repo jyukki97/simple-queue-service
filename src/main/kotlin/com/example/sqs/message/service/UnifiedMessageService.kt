@@ -1,7 +1,9 @@
 package com.example.sqs.message.service
 
+import com.example.sqs.common.redis.RedisKeyManager
 import com.example.sqs.message.domain.Message
 import com.example.sqs.queue.domain.Queue
+import com.example.sqs.storage.service.StorageStatsService
 import com.example.sqs.storage.service.WarmTierManagerService
 import com.example.sqs.storage.util.MessageStorageUtils
 import org.slf4j.LoggerFactory
@@ -19,7 +21,9 @@ class UnifiedMessageService(
     private val redisTemplate: ReactiveRedisTemplate<String, String>,
     private val messageStorageUtils: MessageStorageUtils,
     private val warmTierManagerService: WarmTierManagerService,
-    @Value("\${queue.partition-count:4}") private val partitionCount: Int
+    private val storageStatsService: StorageStatsService,
+    @Value("\${queue.partition-count:4}") private val partitionCount: Int,
+    private val redisKeyManager: RedisKeyManager
 ) {
 
     private val logger = LoggerFactory.getLogger(UnifiedMessageService::class.java)
@@ -102,6 +106,14 @@ class UnifiedMessageService(
 
         return messageStorageUtils.saveMessageDetails(message)
             .then(addToHotStorage(queue, message, partition))
+            .then(
+                // HOT tier index에 메시지 추가
+                storageStatsService.updateTierIndex(message.messageId, queue, null, "HOT")
+                    .onErrorResume { 
+                        logger.warn("Tier index 업데이트 실패: ${message.messageId}", it)
+                        Mono.empty() 
+                    }
+            )
             .thenReturn(message)
             .doOnSuccess {
                 logger.debug("메시지를 Hot Storage 파티션 $partition 에 저장: messageId=${message.messageId}")
@@ -124,7 +136,7 @@ class UnifiedMessageService(
      * 특정 파티션의 Available 큐에서 메시지 수신 (올바른 아키텍처)
      */
     private fun receiveFromAvailableQueue(queue: Queue, partition: Int, maxMessages: Int): Flux<Message> {
-        val availableKey = queue.getHotKey(partition) // 실제로는 Available 큐 키
+        val availableKey = redisKeyManager.getAvailableQueueKey(queue, partition)
 
         return Flux.range(0, maxMessages)
             .concatMap {
@@ -224,11 +236,11 @@ class UnifiedMessageService(
     }
 
     /**
-     * InFlight 큐에 메시지 추가
+     * InFlight 큐에 메시지 추가 (ZSet 타입 - 시간 기반 만료 관리)
      */
     private fun addToInFlight(queue: Queue, message: Message, timeoutSeconds: Int): Mono<Void> {
         val partition = determinePartition(queue, message)
-        val inFlightKey = queue.getInFlightKey(partition)
+        val inFlightKey = redisKeyManager.getProcessingQueueKey(queue, partition)
         val score = message.visibleAt.epochSecond.toDouble()
         val value = "${message.messageId}:${message.receiptHandle}"
 
@@ -238,19 +250,19 @@ class UnifiedMessageService(
     }
 
     /**
-     * Hot Storage에 메시지 추가
+     * Hot Storage에 메시지 추가 (List 타입으로 통일)
      */
     private fun addToHotStorage(queue: Queue, message: Message, partition: Int): Mono<Void> {
-        val hotKey = queue.getHotKey(partition)
+        val availableKey = redisKeyManager.getAvailableQueueKey(queue, partition)
 
         return if (message.delaySeconds > 0) {
-            // 지연 메시지는 delayed 큐에 저장
-            val delayedKey = queue.getDelayedKey(partition)
+            // 지연 메시지는 delayed 큐에 저장 (ZSet 타입 - 시간 기반 정렬)
+            val delayedKey = redisKeyManager.getDelayedQueueKey(queue, partition)
             val score = message.visibleAt.epochSecond.toDouble()
             redisTemplate.opsForZSet().add(delayedKey, message.messageId, score).then()
         } else {
-            // 즉시 처리 가능한 메시지는 Hot Storage에 저장
-            redisTemplate.opsForList().rightPush(hotKey, message.messageId).then()
+            // 즉시 처리 가능한 메시지는 Available 큐에 저장 (List 타입)
+            redisTemplate.opsForList().rightPush(availableKey, message.messageId).then()
         }
     }
 
@@ -273,12 +285,3 @@ class UnifiedMessageService(
         }
     }
 }
-
-/**
- * Queue 확장 함수들 (올바른 네이밍 - 실제 역할 반영)
- */
-private fun Queue.getHotKey(partition: Int): String = "queue:$tenantId:${queueName}_partition_$partition" // Available 큐 (메시지 ID 대기열)
-private fun Queue.getWarmKey(partition: Int): String = "storage:warm:$tenantId:${queueName}_partition_$partition" // WARM 스토리지 인덱스
-private fun Queue.getColdKey(partition: Int): String = "storage:cold:$tenantId:${queueName}_partition_$partition" // COLD 스토리지 인덱스
-private fun Queue.getDelayedKey(partition: Int): String = "delayed:$tenantId:${queueName}_partition_$partition"
-private fun Queue.getInFlightKey(partition: Int): String = "inflight:$tenantId:${queueName}_partition_$partition"

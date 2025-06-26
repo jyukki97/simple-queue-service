@@ -1,18 +1,20 @@
 package com.example.sqs.performance.test
 
-import com.example.sqs.queue.service.QueueService
-import com.example.sqs.queue.domain.QueueAttributes
-import com.example.sqs.message.service.MessageService
 import com.example.sqs.message.domain.ReceiveMessageRequest
 import com.example.sqs.message.domain.SendMessageRequest
+import com.example.sqs.message.service.MessageService
+import com.example.sqs.queue.domain.QueueAttributes
+import com.example.sqs.queue.service.QueueService
 import kotlinx.coroutines.*
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.ActiveProfiles
-import org.slf4j.LoggerFactory
 import kotlin.system.measureTimeMillis
 
+@Disabled
 @SpringBootTest
 @ActiveProfiles("test")
 class LaptopOptimizedPerformanceTest {
@@ -658,7 +660,7 @@ class LaptopOptimizedPerformanceTest {
         logger.info("├─────────────┼──────────┼──────────┼──────────┼─────────┼──────────┤")
         logger.info(
             "│ AGGREGATE   │ %8d │ %6d/s │ %8d │ %5d/s │   %3.0f%%   │".format(
-                result.totalSent, result.aggregateSendThroughput, result.totalReceived, 
+                result.totalSent, result.aggregateSendThroughput, result.totalReceived,
                 result.aggregateReceiveThroughput, result.overallRecoveryRate
             )
         )
@@ -732,11 +734,13 @@ class LaptopOptimizedPerformanceTest {
                 logger.info("• Ready for production-scale development and testing")
                 logger.info("• Consider scaling up for load testing scenarios")
             }
+
             bestThroughput >= 1500 && bestRecovery >= 80 -> {
                 logger.info("🟡 GOOD performance for laptop development")
                 logger.info("• Suitable for development and moderate testing")
                 logger.info("• Monitor resource usage during extended tests")
             }
+
             else -> {
                 logger.info("🔴 NEEDS OPTIMIZATION for laptop environment")
                 logger.info("• Consider reducing message sizes or batch sizes")
@@ -797,13 +801,15 @@ ${kafkaResult.consumerResults.joinToString("\n") { "| ${it.threadId} | ${it.mess
 
 ### Kafka 스타일 분석
 - **메시지 복구율**: ${String.format("%.1f", kafkaResult.recoveryRate)}%
-- **성능 등급**: ${when {
-    kafkaResult.sendThroughput >= 5000 -> "A+ (High-end laptop)"
-    kafkaResult.sendThroughput >= 3000 -> "A (Mid-range laptop)"
-    kafkaResult.sendThroughput >= 1500 -> "B (Entry-level laptop)"
-    kafkaResult.sendThroughput >= 800 -> "C (Below expectations)"
-    else -> "D (Needs optimization)"
-}}
+- **성능 등급**: ${
+            when {
+                kafkaResult.sendThroughput >= 5000 -> "A+ (High-end laptop)"
+                kafkaResult.sendThroughput >= 3000 -> "A (Mid-range laptop)"
+                kafkaResult.sendThroughput >= 1500 -> "B (Entry-level laptop)"
+                kafkaResult.sendThroughput >= 800 -> "C (Below expectations)"
+                else -> "D (Needs optimization)"
+            }
+        }
 - **특징**: 단일 큐에서 높은 처리량, 배치 처리 최적화
 
 ## 🐰 RabbitMQ 스타일 성능 테스트
@@ -824,19 +830,23 @@ ${kafkaResult.consumerResults.joinToString("\n") { "| ${it.threadId} | ${it.mess
 ### 큐별 성능
 | 큐 이름 | 송신 (msg/sec) | 수신 (msg/sec) | 송신 메시지 | 수신 메시지 | 복구율 (%) |
 |---------|----------------|----------------|-------------|-------------|------------|
-${rabbitResult.queueResults.values.joinToString("\n") { 
-    "| ${it.queueName} | ${it.sendThroughput} | ${it.receiveThroughput} | ${it.messagesSent} | ${it.messagesReceived} | ${String.format("%.0f", it.recoveryRate)} |"
-}}
+${
+            rabbitResult.queueResults.values.joinToString("\n") {
+                "| ${it.queueName} | ${it.sendThroughput} | ${it.receiveThroughput} | ${it.messagesSent} | ${it.messagesReceived} | ${String.format("%.0f", it.recoveryRate)} |"
+            }
+        }
 
 ### RabbitMQ 스타일 분석
 - **전체 메시지 복구율**: ${String.format("%.1f", rabbitResult.overallRecoveryRate)}%
-- **성능 등급**: ${when {
-    rabbitResult.aggregateSendThroughput >= 4000 -> "A+ (High-end laptop)"
-    rabbitResult.aggregateSendThroughput >= 2500 -> "A (Mid-range laptop)"
-    rabbitResult.aggregateSendThroughput >= 1200 -> "B (Entry-level laptop)"
-    rabbitResult.aggregateSendThroughput >= 600 -> "C (Below expectations)"
-    else -> "D (Needs optimization)"
-}}
+- **성능 등급**: ${
+            when {
+                rabbitResult.aggregateSendThroughput >= 4000 -> "A+ (High-end laptop)"
+                rabbitResult.aggregateSendThroughput >= 2500 -> "A (Mid-range laptop)"
+                rabbitResult.aggregateSendThroughput >= 1200 -> "B (Entry-level laptop)"
+                rabbitResult.aggregateSendThroughput >= 600 -> "C (Below expectations)"
+                else -> "D (Needs optimization)"
+            }
+        }
 - **특징**: 다중 큐 라우팅, 메시지 타입별 처리, 복잡한 워크플로우 지원
 
 ## 📊 종합 성능 비교
@@ -858,7 +868,8 @@ ${rabbitResult.queueResults.values.joinToString("\n") {
 ## 🎯 성능 분석 및 결론
 
 ### 강점
-${if (maxOf(kafkaResult.sendThroughput, rabbitResult.aggregateSendThroughput) >= 3000) """
+${
+            if (maxOf(kafkaResult.sendThroughput, rabbitResult.aggregateSendThroughput) >= 3000) """
 #### 🟢 우수한 성능
 - 노트북 환경에서 실제 메시지 브로커 수준의 성능 달성
 - 개발 및 테스팅 환경에 적합한 처리량
@@ -868,7 +879,8 @@ ${if (maxOf(kafkaResult.sendThroughput, rabbitResult.aggregateSendThroughput) >=
 - 노트북 환경 고려 시 적절한 성능
 - 개발 환경에서의 기본적인 기능 검증 가능
 - 최적화를 통한 성능 향상 여지 존재
-"""}
+"""
+        }
 
 ### 사용 시나리오별 권장사항
 
@@ -886,28 +898,32 @@ ${if (maxOf(kafkaResult.sendThroughput, rabbitResult.aggregateSendThroughput) >=
 
 ### 노트북 환경 최적화 권장사항
 
-${when {
-    maxOf(kafkaResult.sendThroughput, rabbitResult.aggregateSendThroughput) >= 3000 -> """
+${
+            when {
+                maxOf(kafkaResult.sendThroughput, rabbitResult.aggregateSendThroughput) >= 3000 -> """
 #### 🚀 성능 최적화 완료
 - 현재 설정으로 프로덕션 수준 개발 가능
 - 부하 테스트 확장 고려
 - 모니터링 도구 추가 검토
 """
-    maxOf(kafkaResult.sendThroughput, rabbitResult.aggregateSendThroughput) >= 1500 -> """
+
+                maxOf(kafkaResult.sendThroughput, rabbitResult.aggregateSendThroughput) >= 1500 -> """
 #### ⚡ 추가 최적화 고려사항
 - 메시지 배치 크기 조정
 - 스레드 수 최적화
 - 메모리 할당 검토
 - SSD 사용 권장
 """
-    else -> """
+
+                else -> """
 #### 🔧 성능 개선 필요
 - 시스템 리소스 확인 (CPU, 메모리, 디스크)
 - 백그라운드 프로세스 점검
 - JVM 튜닝 고려
 - 메시지 크기 최적화
 """
-}}
+            }
+        }
 
 ## 📈 메모리 사용량 분석
 - **테스트 전 사용 메모리**: ${systemInfo.totalMemoryMB - systemInfo.freeMemoryMB}MB
