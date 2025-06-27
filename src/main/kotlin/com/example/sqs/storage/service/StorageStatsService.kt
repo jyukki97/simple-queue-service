@@ -361,7 +361,7 @@ class StorageStatsService(
      */
     private fun getColdTierMessages(queue: Queue, maxMessages: Int, offset: Int): Mono<List<TierMessageInfo>> {
         return mono {
-            // ColdStorageService에서 직접 메시지 조회
+            // COLD 스토리지에서는 파티션된 큐 이름으로 저장되므로 실제 queueName만 사용
             val messages = coldStorageService.getMessages(queue.queueName, maxMessages + offset)
 
             messages.drop(offset).take(maxMessages).map { message ->
