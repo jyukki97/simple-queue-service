@@ -127,6 +127,47 @@ class RedisKeyManager {
         "tier:index:${tier}:${tenantId}:${queueName}"
 
     /**
+     * 글로벌 메시지 위치 인덱스 키 (크로스-티어 쿼리용): global:index:{tenantId}:{queueName}
+     */
+    fun getGlobalMessageIndexKey(tenantId: String, queueName: String): String =
+        "global:index:${tenantId}:${queueName}"
+
+    /**
+     * 티어 성능 인덱스 키: tier:perf:{tier}
+     */
+    fun getTierPerformanceIndexKey(tier: String): String =
+        "tier:perf:${tier}"
+
+    /**
+     * 메시지 접근 패턴 추적 키: access:pattern:{tenantId}:{queueName}
+     */
+    fun getAccessPatternKey(tenantId: String, queueName: String): String =
+        "access:pattern:${tenantId}:${queueName}"
+
+    /**
+     * HOT 계층 만료 메시지 인덱스 키: hot:expired:index
+     */
+    fun getHotExpiredIndexKey(): String = "hot:expired:index"
+
+    /**
+     * 메시지 그룹 타임라인 키 (FIFO 순서 보장용): group:{messageGroupId}:timeline
+     */
+    fun getMessageGroupTimelineKey(messageGroupId: String): String =
+        "group:${messageGroupId}:timeline"
+
+    /**
+     * 메시지 그룹 처리 상태 키: group:{messageGroupId}:processing
+     */
+    fun getMessageGroupProcessingKey(messageGroupId: String): String =
+        "group:${messageGroupId}:processing"
+
+    /**
+     * 메시지 중복 제거 키: dedup:{deduplicationId}
+     */
+    fun getDeduplicationKey(deduplicationId: String): String =
+        "dedup:${deduplicationId}"
+
+    /**
      * 계층별 메시지 인덱스 키 (Queue 객체 사용)
      */
     fun getTierIndexKey(tier: String, queue: Queue): String =

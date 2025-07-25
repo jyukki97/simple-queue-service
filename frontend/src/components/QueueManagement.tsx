@@ -9,6 +9,7 @@ import queueService, {
   MessageResponse
 } from '../services/queueService';
 import StorageMessagesView from './StorageMessagesView';
+import EnhancedMessageManager from './EnhancedMessageManager';
 import './QueueManagement.css';
 
 const QueueManagement: React.FC = () => {
@@ -23,6 +24,7 @@ const QueueManagement: React.FC = () => {
   const [showReceiveModal, setShowReceiveModal] = useState<string | null>(null);
   const [showStatsModal, setShowStatsModal] = useState<string | null>(null);
   const [storageViewVisible, setStorageViewVisible] = useState<string | null>(null);
+  const [messageManagerVisible, setMessageManagerVisible] = useState<string | null>(null);
   const [peekedMessages, setPeekedMessages] = useState<MessagePreview[]>([]);
   const [receivedMessages, setReceivedMessages] = useState<MessageResponse[]>([]);
   const [newQueue, setNewQueue] = useState({
@@ -983,6 +985,13 @@ const QueueManagement: React.FC = () => {
               >
                 🗂️ 스토리지 계층
               </button>
+              <button 
+                className="action-btn enhanced"
+                onClick={() => setMessageManagerVisible(queue.queueName)}
+                title="고급 메시지 관리"
+              >
+                ⚡ 고급 관리
+              </button>
             </div>
           </div>
         );
@@ -1009,6 +1018,27 @@ const QueueManagement: React.FC = () => {
           visible={true}
           onClose={() => setStorageViewVisible(null)}
         />
+      )}
+
+      {/* Enhanced Message Manager Modal */}
+      {messageManagerVisible && (
+        <div className="modal-overlay">
+          <div className="modal enhanced-modal">
+            <div className="modal-header">
+              <h2>⚡ {messageManagerVisible} - Advanced Message Management</h2>
+              <button 
+                className="close-btn"
+                onClick={() => setMessageManagerVisible(null)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="enhanced-modal-content">
+              <EnhancedMessageManager queueName={messageManagerVisible} />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -12,6 +12,14 @@ import {
   DeleteMessageBatchResponse,
   QueueStatistics,
   MessagePreview,
+  MessageSearchRequest,
+  MessageSearchResponse,
+  BulkOperationRequest,
+  BulkOperationResponse,
+  TierMetrics,
+  StorageUsageInfo,
+  EnhancedMessageResponse,
+  StorageTier,
 } from '../types/sqs';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080';
@@ -98,6 +106,84 @@ export const sqsApi = {
   ): Promise<ApiResponse<MessagePreview[]>> => {
     const response = await api.get(`/api/v1/queues/${queueName}/messages/peek`, {
       params: { maxMessages },
+    });
+    return response.data;
+  },
+
+  // Enhanced search and filtering endpoints
+  searchMessages: async (
+    queueName: string,
+    searchRequest: MessageSearchRequest
+  ): Promise<ApiResponse<MessageSearchResponse>> => {
+    const response = await api.post(`/api/v1/queues/${queueName}/messages/search`, searchRequest);
+    return response.data;
+  },
+
+  // Bulk operations
+  bulkOperation: async (
+    queueName: string,
+    bulkRequest: BulkOperationRequest
+  ): Promise<ApiResponse<BulkOperationResponse>> => {
+    const response = await api.post(`/api/v1/queues/${queueName}/messages/bulk`, bulkRequest);
+    return response.data;
+  },
+
+  // Storage tier endpoints
+  getTierMetrics: async (tier: StorageTier): Promise<ApiResponse<TierMetrics>> => {
+    const response = await api.get(`/api/v1/storage/tiers/${tier}/metrics`);
+    return response.data;
+  },
+
+  getStorageUsage: async (tier: StorageTier): Promise<ApiResponse<StorageUsageInfo>> => {
+    const response = await api.get(`/api/v1/storage/tiers/${tier}/usage`);
+    return response.data;
+  },
+
+  getAllTierMetrics: async (): Promise<ApiResponse<TierMetrics[]>> => {
+    const response = await api.get('/api/v1/storage/tiers/metrics');
+    return response.data;
+  },
+
+  // Cross-tier message lookup
+  findMessageAcrossTiers: async (
+    messageId: string
+  ): Promise<ApiResponse<EnhancedMessageResponse>> => {
+    const response = await api.get(`/api/v1/storage/messages/${messageId}`);
+    return response.data;
+  },
+
+  // Get messages by tier
+  getMessagesByTier: async (
+    queueName: string,
+    tier: StorageTier,
+    limit: number = 50
+  ): Promise<ApiResponse<EnhancedMessageResponse[]>> => {
+    const response = await api.get(`/api/v1/storage/queues/${queueName}/messages/by-tier`, {
+      params: { tier, limit },
+    });
+    return response.data;
+  },
+
+  // Migration operations
+  migrateMessages: async (
+    fromTier: StorageTier,
+    toTier: StorageTier,
+    messageIds?: string[]
+  ): Promise<ApiResponse<BulkOperationResponse>> => {
+    const response = await api.post('/api/v1/storage/migrate', {
+      fromTier,
+      toTier,
+      messageIds,
+    });
+    return response.data;
+  },
+
+  // Performance monitoring
+  getPerformanceMetrics: async (
+    timeRange?: { start: string; end: string }
+  ): Promise<ApiResponse<any>> => {
+    const response = await api.get('/api/v1/monitoring/performance', {
+      params: timeRange,
     });
     return response.data;
   },

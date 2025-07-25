@@ -43,3 +43,5 @@ bin/
 
 /docs/blogs/
 /data/
+/sessions/
+.claude/
