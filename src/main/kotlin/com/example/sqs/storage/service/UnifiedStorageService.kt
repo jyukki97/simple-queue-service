@@ -22,7 +22,7 @@ class UnifiedStorageService(
 ) {
 
     /**
-     * 메시지 삭제
+     * 메시지 삭제 (성능 최적화 계획)
      */
     suspend fun deleteMessage(messageId: String): Boolean {
         val location = tieringManager.getMessageLocation(messageId)
@@ -48,17 +48,17 @@ class UnifiedStorageService(
             }
 
             PromotionHintType.BATCH_PROCESSING_SCHEDULED -> {
-                // 배치 처리 예정이므로 많은 메시지를 웜으로 승격
+                // 배치 처리 예정이므로 많은 메시지를 웜으로 승격 (계획)
                 // 구현 로직
             }
 
             PromotionHintType.EXPECTED_BURST_TRAFFIC -> {
-                // 버스트 트래픽 예상이므로 사전 승격
+                // 버스트 트래픽 예상이므로 사전 승격 (계획)
                 // 구현 로직
             }
 
             PromotionHintType.MANUAL_PROMOTION -> {
-                // 수동 승격 처리
+                // 수동 승격 처리 (계획)
                 // 구현 로직
             }
         }

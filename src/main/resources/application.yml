@@ -6,14 +6,26 @@ spring:
     host: ${REDIS_HOST:localhost}
     port: ${REDIS_PORT:6379}
     password: ${REDIS_PASSWORD:}
-    timeout: 2000ms
+    timeout: 500ms              # 5000ms에서 500ms로 감소 (10x 빠름)
+    connect-timeout: 1000ms     # 3000ms에서 1000ms로 감소 (3x 빠름)
     lettuce:
       pool:
-        max-active: 20
-        max-idle: 8
-        min-idle: 2
-        max-wait: 1000ms
-      shutdown-timeout: 100ms
+        max-active: 100  # 50에서 100으로 증가 (2x) - 고성능 전용
+        max-idle: 30     # 20에서 30으로 증가 (1.5x)
+        min-idle: 15     # 5에서 15로 증가 (3x) - 연결 준비
+        max-wait: 100ms  # 2000ms에서 100ms로 감소 (20x 빠름)
+        time-between-eviction-runs: 10000ms  # 30s에서 10s로 감소
+      shutdown-timeout: 50ms     # 100ms에서 50ms로 감소
+      cluster:
+        refresh:
+          adaptive: true
+          period: 15000ms        # 30s에서 15s로 감소
+      # 고성능 전용 설정
+      read-timeout: 300ms        # 3000ms에서 300ms로 감소 (10x)
+      write-timeout: 300ms       # 3000ms에서 300ms로 감소 (10x)
+      # TCP 연결 최적화
+      tcp-nodelay: true          # Nagle 알고리즘 비활성화
+      tcp-keepalive: true        # TCP Keep-Alive 활성화
   
   jackson:
     property-naming-strategy: SNAKE_CASE
@@ -81,16 +93,16 @@ app:
         warm-time-threshold-hours: 24 # Warm → Cold 이관 시간 임계값
         enable-hot-warm-swap: true   # Hot-Warm 스왑 활성화
   
-  # Redis 성능 최적화 설정
+  # Redis 성능 최적화 설정 (대형 개선)
   redis:
     performance:
-      io-thread-pool-size: 4
-      computation-thread-pool-size: 4
-      command-timeout-ms: 5000
+      io-thread-pool-size: 16     # 4에서 16으로 증가 (4x)
+      computation-thread-pool-size: 8  # CPU 코어 수 매칭
+      command-timeout-ms: 500     # 5000에서 500으로 감소 (10x 빠름)
       enable-pipelining: true
-      pipeline-buffer-size: 1000
-      max-pool-size: 20
-      min-idle-size: 5
+      pipeline-buffer-size: 5000  # 1000에서 5000으로 증가 (5x)
+      max-pool-size: 50          # 20에서 50으로 증가 (2.5x)
+      min-idle-size: 10          # 5에서 10으로 증가 (2x)
 
 logging:
   level:

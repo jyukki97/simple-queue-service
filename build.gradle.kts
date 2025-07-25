@@ -45,6 +45,10 @@ dependencies {
     // Utilities
     implementation("org.apache.commons:commons-lang3")
     
+    // MessagePack for binary serialization (performance optimization)
+    implementation("org.msgpack:msgpack-core:0.9.8")
+    implementation("org.msgpack:jackson-dataformat-msgpack:0.9.8")
+    
     // Test
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
@@ -55,12 +59,17 @@ dependencies {
 tasks.withType<Test> {
     useJUnitPlatform()
     
-    // 테스트 실행 설정
-    maxHeapSize = "1g"
+    // 테스트 실행 설정 (성능 최적화)
+    maxHeapSize = "2g"  // 테스트 메모리 증가
+    minHeapSize = "512m"
     jvmArgs = listOf(
         "-XX:+UseG1GC",
-        "-XX:MaxGCPauseMillis=100"
+        "-XX:MaxGCPauseMillis=100",
+        "-XX:+UseStringDeduplication"
     )
+    
+    // 병렬 테스트 설정
+    maxParallelForks = Runtime.getRuntime().availableProcessors()
     
     // 테스트 리포트 설정
     reports {
@@ -116,7 +125,34 @@ tasks.register<Test>("performanceTest") {
 
 tasks.withType<KotlinCompile> {
     kotlinOptions {
-        freeCompilerArgs += "-Xjsr305=strict"
+        freeCompilerArgs += listOf(
+            "-Xjsr305=strict",
+            "-Xopt-in=kotlin.RequiresOptIn",
+            "-Xopt-in=kotlinx.coroutines.ExperimentalCoroutinesApi",
+            "-Xopt-in=kotlinx.coroutines.FlowPreview"
+        )
         jvmTarget = "21"
     }
 }
+
+// Build 성능 최적화
+tasks.withType<org.springframework.boot.gradle.tasks.bundling.BootJar> {
+    archiveFileName.set("${project.name}.jar")
+    
+    // JAR 최적화
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    
+    // 레이어 최적화
+    layered {
+        enabled = true
+    }
+}
+
+// Gradle 빌드 캐시 최적화
+configurations.all {
+    resolutionStrategy.cacheChangingModulesFor(0, "seconds")
+    resolutionStrategy.cacheDynamicVersionsFor(0, "seconds")
+}
+
+// 메모리 최적화는 gradle.properties에서 설정
