@@ -5,6 +5,7 @@ import com.example.sqs.common.domain.ApiResponse
 import com.example.sqs.tenant.service.TenantService
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
+import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Component
@@ -34,9 +35,15 @@ class ApiKeyAuthenticationFilter(
     override fun filter(exchange: ServerWebExchange, chain: WebFilterChain): Mono<Void> {
         val request = exchange.request
         val path = request.path.pathWithinApplication().value()
+        val method = request.method
         
         // 제외 경로 체크
         if (EXCLUDED_PATHS.any { path.startsWith(it) }) {
+            return chain.filter(exchange)
+        }
+        
+        // CORS preflight OPTIONS 요청은 인증 없이 통과
+        if (method == HttpMethod.OPTIONS) {
             return chain.filter(exchange)
         }
         

@@ -6,6 +6,7 @@ import com.example.sqs.message.domain.DeleteMessageBatchRequest
 import com.example.sqs.message.domain.DeleteMessageBatchResponse
 import com.example.sqs.message.repository.MessageRepository
 import com.example.sqs.queue.service.QueueService
+import com.example.sqs.streaming.service.StreamingService
 import org.springframework.stereotype.Service
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
@@ -16,7 +17,8 @@ import reactor.core.publisher.Mono
 @Service
 class MessageDeletionService(
     private val messageRepository: MessageRepository,
-    private val queueService: QueueService
+    private val queueService: QueueService,
+    private val streamingService: StreamingService
 ) : BaseReactiveService() {
 
     override fun getServiceName(): String = "MessageDeletionService"
@@ -26,7 +28,17 @@ class MessageDeletionService(
      */
     fun deleteMessage(tenantId: String, queueName: String, receiptHandle: String): Mono<Void> {
         return queueService.findQueue(tenantId, queueName)
-            .flatMap { queue -> messageRepository.deleteMessage(queue, receiptHandle) }
+            .flatMap { queue -> 
+                messageRepository.deleteMessage(queue, receiptHandle)
+                    .then(
+                        // 스트리밍 이벤트 발송 (messageId는 receiptHandle을 임시로 사용)
+                        streamingService.publishMessageDeleted(
+                            tenantId = tenantId,
+                            queueName = queueName,
+                            messageId = receiptHandle // 임시로 receiptHandle 사용
+                        )
+                    )
+            }
             .doOnSuccess {
                 logger.info("[${getServiceName()}] 메시지 삭제 완료 - tenant: $tenantId, queue: $queueName")
             }

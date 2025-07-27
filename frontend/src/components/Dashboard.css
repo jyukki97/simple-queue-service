@@ -362,6 +362,13 @@
   color: #9ca3af;
 }
 
+/* Streaming Section */
+.streaming-section {
+  margin-bottom: 2rem;
+  padding: 0;
+  background: transparent;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
   .dashboard {

@@ -1,6 +1,5 @@
-import axios, { AxiosResponse } from 'axios';
-
-const API_BASE_URL = process.env.REACT_APP_API_URL || '';
+import { AxiosResponse } from 'axios';
+import { apiClient } from './sqsApi';
 
 export interface TierStats {
   tier: string;
@@ -96,23 +95,13 @@ export interface ApiResponse<T> {
 }
 
 class StorageService {
-  private apiKey = 'test-api-key'; // TODO: 실제 환경에서는 안전한 방식으로 관리
-
-  private getHeaders() {
-    return {
-      'X-API-Key': this.apiKey,
-      'Content-Type': 'application/json'
-    };
-  }
 
   /**
    * 전체 스토리지 통계 조회
    */
   async getStorageStats(): Promise<StorageStatsResponse> {
-    const response: AxiosResponse<ApiResponse<StorageStatsResponse>> = await axios.get(
-      `${API_BASE_URL}/api/v1/storage/stats`,
-      { headers: this.getHeaders() }
-    );
+    const response: AxiosResponse<ApiResponse<StorageStatsResponse>> = await apiClient.get(
+      `/api/v1/storage/stats`    );
     
     if (!response.data.success) {
       throw new Error(response.data.error?.message || 'Failed to fetch storage stats');
@@ -125,10 +114,8 @@ class StorageService {
    * 특정 큐의 스토리지 통계 조회
    */
   async getQueueStorageStats(queueName: string): Promise<QueueStorageStats> {
-    const response: AxiosResponse<ApiResponse<QueueStorageStats>> = await axios.get(
-      `${API_BASE_URL}/api/v1/storage/queues/${encodeURIComponent(queueName)}/stats`,
-      { headers: this.getHeaders() }
-    );
+    const response: AxiosResponse<ApiResponse<QueueStorageStats>> = await apiClient.get(
+      `/api/v1/storage/queues/${encodeURIComponent(queueName)}/stats`    );
     
     if (!response.data.success) {
       throw new Error(response.data.error?.message || 'Failed to fetch queue storage stats');
@@ -151,10 +138,8 @@ class StorageService {
       offset: offset.toString()
     });
 
-    const response: AxiosResponse<TierMessagesResponse> = await axios.get(
-      `${API_BASE_URL}/api/v1/storage/queues/${encodeURIComponent(queueName)}/tiers/${tier}/messages?${params.toString()}`,
-      { headers: this.getHeaders() }
-    );
+    const response: AxiosResponse<TierMessagesResponse> = await apiClient.get(
+      `/api/v1/storage/queues/${encodeURIComponent(queueName)}/tiers/${tier}/messages?${params.toString()}`    );
     
     return response.data;
   }
@@ -163,10 +148,8 @@ class StorageService {
    * 스토리지 계층별 메시지 요약 조회
    */
   async getMessagesSummaryByTier(queueName: string): Promise<StorageMessagesSummaryResponse> {
-    const response: AxiosResponse<StorageMessagesSummaryResponse> = await axios.get(
-      `${API_BASE_URL}/api/v1/storage/queues/${encodeURIComponent(queueName)}/messages/by-tier`,
-      { headers: this.getHeaders() }
-    );
+    const response: AxiosResponse<StorageMessagesSummaryResponse> = await apiClient.get(
+      `/api/v1/storage/queues/${encodeURIComponent(queueName)}/messages/by-tier`    );
     
     return response.data;
   }
@@ -175,10 +158,8 @@ class StorageService {
    * 메시지 위치 정보 조회
    */
   async getMessageLocation(messageId: string): Promise<MessageLocationResponse> {
-    const response: AxiosResponse<MessageLocationResponse> = await axios.get(
-      `${API_BASE_URL}/api/v1/storage/messages/${encodeURIComponent(messageId)}/location`,
-      { headers: this.getHeaders() }
-    );
+    const response: AxiosResponse<MessageLocationResponse> = await apiClient.get(
+      `/api/v1/storage/messages/${encodeURIComponent(messageId)}/location`    );
     
     return response.data;
   }
@@ -187,11 +168,9 @@ class StorageService {
    * 메시지 수동 승격
    */
   async promoteMessage(messageId: string, request: PromoteMessageRequest): Promise<PromoteMessageResponse> {
-    const response: AxiosResponse<PromoteMessageResponse> = await axios.post(
-      `${API_BASE_URL}/api/v1/storage/messages/${encodeURIComponent(messageId)}/promote`,
-      request,
-      { headers: this.getHeaders() }
-    );
+    const response: AxiosResponse<PromoteMessageResponse> = await apiClient.post(
+      `/api/v1/storage/messages/${encodeURIComponent(messageId)}/promote`,
+      request    );
     
     return response.data;
   }

@@ -34,5 +34,11 @@ class WebFluxConfig : WebFluxConfigurer {
             .allowedHeaders("*")
             .allowCredentials(true)
             .maxAge(3600)
+        
+        // WebSocket용 CORS 설정
+        registry.addMapping("/ws/**")
+            .allowedOrigins("http://localhost:3000")
+            .allowedHeaders("*")
+            .allowCredentials(true)
     }
 }

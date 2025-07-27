@@ -1,3 +1,5 @@
+import configService from '../utils/config';
+
 export interface Tenant {
   tenantId: string;
   apiKey: string;
@@ -16,6 +18,7 @@ export interface TenantResponse extends Tenant {}
 export interface ExtendedTenant extends Tenant {
   queueCount: number;
   messageCount: number;
+  messagesProcessed?: number; // 처리된 메시지 수 추가
   dailyApiCalls: number;
   storageUsed: number;
   // 편의를 위한 isActive 속성 추가
@@ -38,6 +41,7 @@ export interface TenantUsage {
   tenantId: string;
   queueCount: number;
   messageCount: number;
+  messagesProcessedToday?: number; // 처리된 메시지 수 추가
   storageUsedBytes: number;
   apiCallsToday: number;
   lastActivity?: string;
@@ -48,6 +52,10 @@ export interface TenantQuota {
   maxMessagesPerQueue: number;
   maxMessageSizeKB: number;
   maxApiCallsPerMinute: number;
+  // Optional fields for backward compatibility
+  maxMessages?: number;
+  maxApiCalls?: number;
+  maxStorage?: number;
 }
 
 export interface ApiResponse<T> {
@@ -61,11 +69,11 @@ export interface ApiResponse<T> {
 }
 
 class TenantService {
-  private adminApiKey = 'test-api-key'; // TODO: 실제 환경에서는 안전한 방식으로 관리
+  private readonly apiConfig = configService.getApiConfig();
 
   private getHeaders() {
     return {
-      'X-API-Key': this.adminApiKey,
+      'X-API-Key': this.apiConfig.key,
       'Content-Type': 'application/json'
     };
   }
@@ -233,11 +241,12 @@ class TenantService {
   }
 
   /**
-   * 테넌트 사용량 통계 조회
+   * 테넌트 사용량 통계 조회 (실제 데이터 사용)
    */
   async getTenantUsage(tenantId: string): Promise<TenantUsage> {
     try {
-      const response = await fetch(`/api/v1/admin/tenants/${tenantId}/usage`, {
+      // 실제 데이터를 가져오기 위해 대시보드 API 사용
+      const response = await fetch('/api/v1/admin/dashboard', {
         method: 'GET',
         headers: this.getHeaders()
       });
@@ -246,15 +255,37 @@ class TenantService {
         throw new Error(`HTTP Error: ${response.status}`);
       }
 
-      const result: ApiResponse<TenantUsage> = await response.json();
+      const result: ApiResponse<any> = await response.json();
       
       if (!result.success || !result.data) {
         throw new Error(result.error?.message || '사용량 통계 조회에 실패했습니다.');
       }
 
-      return result.data;
+      // 대시보드 데이터에서 해당 테넌트 찾기
+      const tenantStats = result.data.tenantUsageStats?.find((t: any) => t.tenantId === tenantId);
+      
+      if (tenantStats) {
+        return {
+          tenantId,
+          queueCount: tenantStats.queueCount || 0,
+          messageCount: tenantStats.messageCount || 0,
+          messagesProcessedToday: tenantStats.messagesProcessedToday || 0,
+          storageUsedBytes: tenantStats.storageUsed || 0,
+          apiCallsToday: tenantStats.apiCallsToday || 0,
+          lastActivity: tenantStats.lastActivity ? new Date(tenantStats.lastActivity * 1000).toISOString() : undefined
+        };
+      }
+
+      // 테넌트를 찾지 못한 경우 기본값 반환
+      return {
+        tenantId,
+        queueCount: 0,
+        messageCount: 0,
+        storageUsedBytes: 0,
+        apiCallsToday: 0
+      };
     } catch (error) {
-      console.error('Failed to fetch tenant usage:', error);
+      console.error('Failed to fetch tenant usage from dashboard:', error);
       // 에러 시 기본 값 반환
       return {
         tenantId,

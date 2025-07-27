@@ -34,7 +34,7 @@ const StorageTierManager: React.FC<StorageTierManagerProps> = ({ queueName }) =>
   const [refreshInterval, setRefreshInterval] = useState(5000); // 5 seconds
 
   // Load tier data
-  const loadTierData = async (tier: StorageTier) => {
+  const loadTierData = useCallback(async (tier: StorageTier) => {
     setTierData(prev => ({
       ...prev,
       [tier]: { ...prev[tier], loading: true }
@@ -64,7 +64,7 @@ const StorageTierManager: React.FC<StorageTierManagerProps> = ({ queueName }) =>
       }));
       setMessage({ type: 'error', text: `Failed to load ${tier} tier data` });
     }
-  };
+  }, [queueName]);
 
   // Load all tier data
   const loadAllTierData = useCallback(async () => {
@@ -73,7 +73,7 @@ const StorageTierManager: React.FC<StorageTierManagerProps> = ({ queueName }) =>
       loadTierData(StorageTier.WARM),
       loadTierData(StorageTier.COLD)
     ]);
-  }, [queueName]);
+  }, [loadTierData]);
 
   // Migration functions
   const migrateMessages = async (fromTier: StorageTier, toTier: StorageTier, messageIds?: string[]) => {

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import tenantService, { ExtendedTenant, CreateTenantRequest } from '../services/tenantService';
+import logger from '../utils/logger';
 import './TenantManagement.css';
 
 const TenantManagement: React.FC = () => {
@@ -40,6 +41,7 @@ const TenantManagement: React.FC = () => {
               ...tenant,
               queueCount: usage.queueCount,
               messageCount: usage.messageCount,
+              messagesProcessed: usage.messagesProcessedToday || 0, // 추가: 처리된 메시지 수
               dailyApiCalls: usage.apiCallsToday,
               storageUsed: usage.storageUsedBytes,
               quota: {
@@ -55,11 +57,12 @@ const TenantManagement: React.FC = () => {
               isActive: tenant.status === 'ACTIVE'
             } as ExtendedTenant;
           } catch (err) {
-            console.error(`Error fetching data for tenant ${tenant.tenantId}:`, err);
+            logger.error(`Error fetching data for tenant ${tenant.tenantId}`, err);
             return {
               ...tenant,
               queueCount: 0,
               messageCount: 0,
+              messagesProcessed: 0,
               dailyApiCalls: 0,
               storageUsed: 0,
               quota: {
@@ -80,7 +83,7 @@ const TenantManagement: React.FC = () => {
       setTenants(enrichedTenants);
       setError(null);
     } catch (err) {
-      console.error('Failed to fetch tenants:', err);
+      logger.error('Failed to fetch tenants', err);
       setError(err instanceof Error ? err.message : '테넌트 목록을 불러오는데 실패했습니다.');
     } finally {
       setLoading(false);
@@ -166,7 +169,7 @@ const TenantManagement: React.FC = () => {
       await navigator.clipboard.writeText(text);
       alert('클립보드에 복사되었습니다.');
     } catch (err) {
-      console.error('클립보드 복사 실패:', err);
+      logger.error('클립보드 복사 실패', err);
       // 백업 방법
       const textArea = document.createElement('textarea');
       textArea.value = text;
@@ -179,19 +182,23 @@ const TenantManagement: React.FC = () => {
   };
 
   const formatBytes = (bytes: number): string => {
-    if (bytes === 0) return '0 Bytes';
+    if (!bytes || bytes === 0) return '0 Bytes';
     const k = 1024;
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    const i = Math.floor(Math.log(Math.abs(bytes)) / Math.log(k));
+    const index = Math.min(i, sizes.length - 1);
+    return parseFloat((bytes / Math.pow(k, index)).toFixed(2)) + ' ' + sizes[index];
   };
 
   const formatNumber = (num: number): string => {
-    return new Intl.NumberFormat().format(num);
+    if (!num && num !== 0) return '0';
+    return new Intl.NumberFormat('ko-KR').format(num);
   };
 
   const getUsagePercentage = (used: number, max: number): number => {
-    return Math.round((used / max) * 100);
+    if (!max || max === 0) return 0;
+    const percentage = (used / max) * 100;
+    return Math.min(100, Math.max(0, Math.round(percentage)));
   };
 
   const getUsageColor = (percentage: number): string => {
@@ -372,19 +379,13 @@ const TenantManagement: React.FC = () => {
 
               <div className="stat-item">
                 <div className="stat-header">
-                  <span className="stat-label">메시지 수</span>
+                  <span className="stat-label">현재 메시지 수</span>
                   <span className="stat-value">
-                    {formatNumber(tenant.messageCount)} / {formatNumber(tenant.quota.maxMessagesPerQueue)}
+                    {formatNumber(tenant.messageCount)}
                   </span>
                 </div>
-                <div className="progress-bar">
-                  <div 
-                    className="progress-fill" 
-                    style={{ 
-                      width: `${getUsagePercentage(tenant.messageCount, tenant.quota.maxMessagesPerQueue)}%`,
-                      backgroundColor: getUsageColor(getUsagePercentage(tenant.messageCount, tenant.quota.maxMessagesPerQueue))
-                    }}
-                  ></div>
+                <div className="stat-note">
+                  <small>처리된 메시지: {formatNumber(tenant.messagesProcessed || 0)}</small>
                 </div>
               </div>
 
@@ -392,15 +393,15 @@ const TenantManagement: React.FC = () => {
                 <div className="stat-header">
                   <span className="stat-label">일일 API 호출</span>
                   <span className="stat-value">
-                    {formatNumber(tenant.dailyApiCalls)} / {formatNumber(tenant.quota.maxApiCallsPerMinute)}
+                    {formatNumber(tenant.dailyApiCalls)} / {formatNumber(tenant.quota.maxApiCallsPerMinute * 60 * 24)}
                   </span>
                 </div>
                 <div className="progress-bar">
                   <div 
                     className="progress-fill" 
                     style={{ 
-                      width: `${getUsagePercentage(tenant.dailyApiCalls, tenant.quota.maxApiCallsPerMinute)}%`,
-                      backgroundColor: getUsageColor(getUsagePercentage(tenant.dailyApiCalls, tenant.quota.maxApiCallsPerMinute))
+                      width: `${getUsagePercentage(tenant.dailyApiCalls, tenant.quota.maxApiCallsPerMinute * 60 * 24)}%`,
+                      backgroundColor: getUsageColor(getUsagePercentage(tenant.dailyApiCalls, tenant.quota.maxApiCallsPerMinute * 60 * 24))
                     }}
                   ></div>
                 </div>
@@ -410,15 +411,15 @@ const TenantManagement: React.FC = () => {
                 <div className="stat-header">
                   <span className="stat-label">스토리지</span>
                   <span className="stat-value">
-                    {formatBytes(tenant.storageUsed)} / {formatBytes(1024 * 1024 * 1024)}
+                    {formatBytes(tenant.storageUsed)} / {formatBytes(tenant.quota.maxStorage || 1024 * 1024 * 1024)}
                   </span>
                 </div>
                 <div className="progress-bar">
                   <div 
                     className="progress-fill" 
                     style={{ 
-                      width: `${getUsagePercentage(tenant.storageUsed, 1024 * 1024 * 1024)}%`,
-                      backgroundColor: getUsageColor(getUsagePercentage(tenant.storageUsed, 1024 * 1024 * 1024))
+                      width: `${getUsagePercentage(tenant.storageUsed, tenant.quota.maxStorage || 1024 * 1024 * 1024)}%`,
+                      backgroundColor: getUsageColor(getUsagePercentage(tenant.storageUsed, tenant.quota.maxStorage || 1024 * 1024 * 1024))
                     }}
                   ></div>
                 </div>
@@ -494,16 +495,20 @@ const TenantManagement: React.FC = () => {
                   <span>{formatNumber(selectedTenant.queueCount)} / {formatNumber(selectedTenant.quota.maxQueues)}</span>
                 </div>
                 <div className="stat-row">
-                  <span>메시지 수:</span>
-                  <span>{formatNumber(selectedTenant.messageCount)} / {formatNumber(selectedTenant.quota.maxMessagesPerQueue)}</span>
+                  <span>현재 메시지 수:</span>
+                  <span>{formatNumber(selectedTenant.messageCount)}</span>
+                </div>
+                <div className="stat-row">
+                  <span>처리된 메시지:</span>
+                  <span>{formatNumber(selectedTenant.messagesProcessed || 0)}</span>
                 </div>
                 <div className="stat-row">
                   <span>오늘 API 호출:</span>
-                  <span>{formatNumber(selectedTenant.dailyApiCalls)} / {formatNumber(selectedTenant.quota.maxApiCallsPerMinute)}</span>
+                  <span>{formatNumber(selectedTenant.dailyApiCalls)} / {formatNumber(selectedTenant.quota.maxApiCallsPerMinute * 60 * 24)}</span>
                 </div>
                 <div className="stat-row">
                   <span>스토리지:</span>
-                  <span>{formatBytes(selectedTenant.storageUsed)} / {formatBytes(1024 * 1024 * 1024)}</span>
+                  <span>{formatBytes(selectedTenant.storageUsed)} / {formatBytes(selectedTenant.quota.maxStorage || 1024 * 1024 * 1024)}</span>
                 </div>
               </div>
 

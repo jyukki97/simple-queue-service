@@ -1,0 +1,138 @@
+.error-boundary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+  padding: 20px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border: 1px solid #e9ecef;
+}
+
+.error-boundary-content {
+  text-align: center;
+  max-width: 500px;
+  background: white;
+  padding: 40px;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.error-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.error-title {
+  color: #dc3545;
+  margin: 0 0 16px 0;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.error-message {
+  color: #6c757d;
+  margin: 0 0 24px 0;
+  line-height: 1.5;
+}
+
+.error-details {
+  margin: 24px 0;
+  text-align: left;
+  border: 1px solid #e9ecef;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.error-details summary {
+  background: #f8f9fa;
+  padding: 12px 16px;
+  cursor: pointer;
+  font-weight: 600;
+  color: #495057;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.error-details summary:hover {
+  background: #e9ecef;
+}
+
+.error-stack {
+  background: #f8f9fa;
+  color: #495057;
+  padding: 16px;
+  margin: 0;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.error-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 24px;
+}
+
+.retry-button,
+.reload-button {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.retry-button {
+  background: #007bff;
+  color: white;
+}
+
+.retry-button:hover {
+  background: #0056b3;
+  transform: translateY(-1px);
+}
+
+.reload-button {
+  background: #6c757d;
+  color: white;
+}
+
+.reload-button:hover {
+  background: #545b62;
+  transform: translateY(-1px);
+}
+
+.retry-button:active,
+.reload-button:active {
+  transform: translateY(0);
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .error-boundary {
+    min-height: 300px;
+    padding: 16px;
+  }
+  
+  .error-boundary-content {
+    padding: 24px 20px;
+  }
+  
+  .error-title {
+    font-size: 20px;
+  }
+  
+  .error-actions {
+    flex-direction: column;
+  }
+  
+  .retry-button,
+  .reload-button {
+    width: 100%;
+  }
+}

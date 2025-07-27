@@ -13,6 +13,8 @@ import {
 } from 'recharts';
 import adminService from '../services/adminService';
 import { DashboardData, SystemStatus } from '../types/admin';
+import StreamingEvents from './StreamingEvents';
+import { CONFIG } from '../utils/config';
 import './Dashboard.css';
 
 const Dashboard: React.FC = () => {
@@ -46,15 +48,17 @@ const Dashboard: React.FC = () => {
   };
 
   const formatBytes = (bytes: number): string => {
-    if (bytes === 0) return '0 Bytes';
+    if (!bytes || bytes === 0) return '0 Bytes';
     const k = 1024;
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    const i = Math.floor(Math.log(Math.abs(bytes)) / Math.log(k));
+    const index = Math.min(i, sizes.length - 1);
+    return parseFloat((bytes / Math.pow(k, index)).toFixed(2)) + ' ' + sizes[index];
   };
 
   const formatNumber = (num: number): string => {
-    return new Intl.NumberFormat().format(num);
+    if (!num && num !== 0) return '0';
+    return new Intl.NumberFormat('ko-KR').format(num);
   };
 
   const getStatusColor = (status: string): string => {
@@ -183,7 +187,7 @@ const Dashboard: React.FC = () => {
                     <div 
                       className="usage-fill" 
                       style={{ 
-                        width: `${(dashboardData.storageUsage.hot.used / dashboardData.storageUsage.hot.total) * 100}%`,
+                        width: `${Math.min(100, Math.max(0, (dashboardData.storageUsage.hot.used / dashboardData.storageUsage.hot.total) * 100))}%`,
                         backgroundColor: '#EF4444'
                       }}
                     ></div>
@@ -200,7 +204,7 @@ const Dashboard: React.FC = () => {
                     <div 
                       className="usage-fill" 
                       style={{ 
-                        width: `${(dashboardData.storageUsage.warm.used / dashboardData.storageUsage.warm.total) * 100}%`,
+                        width: `${Math.min(100, Math.max(0, (dashboardData.storageUsage.warm.used / dashboardData.storageUsage.warm.total) * 100))}%`,
                         backgroundColor: '#F59E0B'
                       }}
                     ></div>
@@ -217,7 +221,7 @@ const Dashboard: React.FC = () => {
                     <div 
                       className="usage-fill" 
                       style={{ 
-                        width: `${(dashboardData.storageUsage.cold.used / dashboardData.storageUsage.cold.total) * 100}%`,
+                        width: `${Math.min(100, Math.max(0, (dashboardData.storageUsage.cold.used / dashboardData.storageUsage.cold.total) * 100))}%`,
                         backgroundColor: '#3B82F6'
                       }}
                     ></div>
@@ -279,6 +283,13 @@ const Dashboard: React.FC = () => {
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* 실시간 이벤트 스트림 */}
+          {CONFIG.FEATURES.enableStreaming && (
+            <div className="streaming-section">
+              <StreamingEvents maxEvents={50} />
             </div>
           )}
         </>

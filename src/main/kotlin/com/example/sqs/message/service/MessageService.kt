@@ -9,6 +9,7 @@ import com.example.sqs.metrics.service.MetricsService
 import com.example.sqs.performance.monitoring.PerformanceMonitoringService
 import com.example.sqs.queue.domain.Queue
 import com.example.sqs.queue.service.QueueService
+import com.example.sqs.streaming.service.StreamingService
 import com.example.sqs.tracing.service.MessageTraceService
 import org.springframework.stereotype.Service
 import reactor.core.publisher.Flux
@@ -32,7 +33,8 @@ class MessageService(
     private val messageProcessingService: MessageProcessingService,
     private val messageDeletionService: MessageDeletionService,
     private val messageBatchService: MessageBatchService,
-    private val messageFactory: MessageFactory
+    private val messageFactory: MessageFactory,
+    private val streamingService: StreamingService
 ) : BaseReactiveService() {
 
     override fun getServiceName(): String = "MessageService"
@@ -207,6 +209,16 @@ class MessageService(
             .flatMap { sentMessage ->
                 // 성능 메트릭 기록
                 recordMessageSent(sentMessage, tenantId, queueName, request, compressed)
+                    .then(
+                        // 스트리밍 이벤트 발송
+                        streamingService.publishMessageSent(
+                            tenantId = tenantId,
+                            queueName = queueName,
+                            messageId = sentMessage.messageId,
+                            messageBody = request.messageBody, // 원본 메시지 본문 사용
+                            attributes = sentMessage.attributes
+                        )
+                    )
                     .thenReturn(SendMessageResponse(messageId = sentMessage.messageId))
             }
     }
@@ -266,6 +278,14 @@ class MessageService(
                     "visibilityTimeout" to (request.visibilityTimeoutSeconds ?: queue.attributes.visibilityTimeoutSeconds),
                     "queueType" to if (queue.attributes.fifoQueue) "FIFO" else "Standard"
                 )
+            )
+        ).then(
+            // 스트리밍 이벤트 발송
+            streamingService.publishMessageReceived(
+                tenantId = tenantId,
+                queueName = queueName,
+                messageId = message.messageId,
+                receiptHandle = message.receiptHandle!!
             )
         ).thenReturn(message)
     }

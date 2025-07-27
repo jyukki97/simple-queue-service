@@ -1,0 +1,147 @@
+.stat-card {
+  background: white;
+  border: 1px solid #e1e5e9;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stat-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transform: translateY(-2px);
+}
+
+.stat-card.clickable {
+  cursor: pointer;
+}
+
+.stat-card.clickable:hover {
+  border-color: #007bff;
+}
+
+.stat-card.clickable:focus {
+  outline: 2px solid #007bff;
+  outline-offset: 2px;
+}
+
+.stat-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stat-icon {
+  font-size: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+}
+
+.stat-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #6c757d;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.stat-trend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.stat-trend.positive {
+  color: #28a745;
+}
+
+.stat-trend.negative {
+  color: #dc3545;
+}
+
+.trend-icon {
+  font-size: 16px;
+}
+
+.trend-value::before {
+  content: '';
+}
+
+.stat-trend.positive .trend-value::before {
+  content: '+';
+}
+
+.stat-trend.negative .trend-value::before {
+  content: '-';
+}
+
+/* Variants */
+.stat-card.primary {
+  border-color: #007bff;
+  background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+  color: white;
+}
+
+.stat-card.primary .stat-title,
+.stat-card.primary .stat-value {
+  color: white;
+}
+
+.stat-card.success {
+  border-color: #28a745;
+  background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);
+  color: white;
+}
+
+.stat-card.success .stat-title,
+.stat-card.success .stat-value {
+  color: white;
+}
+
+.stat-card.warning {
+  border-color: #ffc107;
+  background: linear-gradient(135deg, #ffc107 0%, #e0a800 100%);
+  color: #212529;
+}
+
+.stat-card.warning .stat-title,
+.stat-card.warning .stat-value {
+  color: #212529;
+}
+
+.stat-card.danger {
+  border-color: #dc3545;
+  background: linear-gradient(135deg, #dc3545 0%, #bd2130 100%);
+  color: white;
+}
+
+.stat-card.danger .stat-title,
+.stat-card.danger .stat-value {
+  color: white;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .stat-card {
+    padding: 16px;
+  }
+
+  .stat-value {
+    font-size: 28px;
+  }
+
+  .stat-icon {
+    font-size: 20px;
+    width: 28px;
+    height: 28px;
+  }
+}

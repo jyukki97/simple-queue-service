@@ -1,6 +1,5 @@
-import axios, { AxiosResponse } from 'axios';
-
-const API_BASE_URL = process.env.REACT_APP_API_URL || '';
+import { AxiosResponse } from 'axios';
+import { apiClient } from './sqsApi';
 
 export interface QueueAttributes {
   visibilityTimeoutSeconds: number;
@@ -125,14 +124,6 @@ export interface ApiResponse<T> {
 }
 
 class QueueService {
-  private apiKey = 'test-api-key'; // Admin API key for testing
-
-  private getHeaders() {
-    return {
-      'X-API-Key': this.apiKey,
-      'Content-Type': 'application/json'
-    };
-  }
 
   /**
    * 큐 목록 조회
@@ -147,10 +138,8 @@ class QueueService {
       params.append('namePattern', namePattern);
     }
 
-    const response: AxiosResponse<ApiResponse<Queue[]>> = await axios.get(
-      `${API_BASE_URL}/api/v1/queues?${params.toString()}`,
-      { headers: this.getHeaders() }
-    );
+    const response: AxiosResponse<ApiResponse<Queue[]>> = await apiClient.get(
+      `/api/v1/queues?${params.toString()}`    );
     
     if (!response.data.success) {
       throw new Error(response.data.error?.message || 'Failed to fetch queues');
@@ -163,11 +152,9 @@ class QueueService {
    * 큐 생성
    */
   async createQueue(request: CreateQueueRequest): Promise<Queue> {
-    const response: AxiosResponse<ApiResponse<Queue>> = await axios.post(
-      `${API_BASE_URL}/api/v1/queues`,
-      request,
-      { headers: this.getHeaders() }
-    );
+    const response: AxiosResponse<ApiResponse<Queue>> = await apiClient.post(
+      `/api/v1/queues`,
+      request    );
     
     if (!response.data.success) {
       throw new Error(response.data.error?.message || 'Failed to create queue');
@@ -180,10 +167,8 @@ class QueueService {
    * 큐 삭제
    */
   async deleteQueue(queueName: string): Promise<string> {
-    const response: AxiosResponse<ApiResponse<string>> = await axios.delete(
-      `${API_BASE_URL}/api/v1/queues/${encodeURIComponent(queueName)}`,
-      { headers: this.getHeaders() }
-    );
+    const response: AxiosResponse<ApiResponse<string>> = await apiClient.delete(
+      `/api/v1/queues/${encodeURIComponent(queueName)}`    );
     
     if (!response.data.success) {
       throw new Error(response.data.error?.message || 'Failed to delete queue');
@@ -196,10 +181,8 @@ class QueueService {
    * 큐 속성 조회
    */
   async getQueueAttributes(queueName: string): Promise<Queue> {
-    const response: AxiosResponse<ApiResponse<Queue>> = await axios.get(
-      `${API_BASE_URL}/api/v1/queues/${encodeURIComponent(queueName)}/attributes`,
-      { headers: this.getHeaders() }
-    );
+    const response: AxiosResponse<ApiResponse<Queue>> = await apiClient.get(
+      `/api/v1/queues/${encodeURIComponent(queueName)}/attributes`    );
     
     if (!response.data.success) {
       throw new Error(response.data.error?.message || 'Failed to fetch queue attributes');
@@ -212,10 +195,8 @@ class QueueService {
    * 큐 통계 조회
    */
   async getQueueStatistics(queueName: string): Promise<QueueStatistics> {
-    const response: AxiosResponse<ApiResponse<QueueStatistics>> = await axios.get(
-      `${API_BASE_URL}/api/v1/queues/${encodeURIComponent(queueName)}/stats`,
-      { headers: this.getHeaders() }
-    );
+    const response: AxiosResponse<ApiResponse<QueueStatistics>> = await apiClient.get(
+      `/api/v1/queues/${encodeURIComponent(queueName)}/stats`    );
     
     if (!response.data.success) {
       throw new Error(response.data.error?.message || 'Failed to fetch queue statistics');
@@ -228,11 +209,9 @@ class QueueService {
    * 메시지 전송
    */
   async sendMessage(queueName: string, request: SendMessageRequest): Promise<SendMessageResponse> {
-    const response: AxiosResponse<ApiResponse<SendMessageResponse>> = await axios.post(
-      `${API_BASE_URL}/api/v1/queues/${encodeURIComponent(queueName)}/messages`,
-      request,
-      { headers: this.getHeaders() }
-    );
+    const response: AxiosResponse<ApiResponse<SendMessageResponse>> = await apiClient.post(
+      `/api/v1/queues/${encodeURIComponent(queueName)}/messages`,
+      request    );
     
     if (!response.data.success) {
       throw new Error(response.data.error?.message || 'Failed to send message');
@@ -245,11 +224,9 @@ class QueueService {
    * 메시지 일괄 전송
    */
   async sendMessageBatch(queueName: string, request: SendMessageBatchRequest): Promise<SendMessageBatchResponse> {
-    const response: AxiosResponse<ApiResponse<SendMessageBatchResponse>> = await axios.post(
-      `${API_BASE_URL}/api/v1/queues/${encodeURIComponent(queueName)}/messages/batch`,
-      request,
-      { headers: this.getHeaders() }
-    );
+    const response: AxiosResponse<ApiResponse<SendMessageBatchResponse>> = await apiClient.post(
+      `/api/v1/queues/${encodeURIComponent(queueName)}/messages/batch`,
+      request    );
     
     if (!response.data.success) {
       throw new Error(response.data.error?.message || 'Failed to send batch messages');
@@ -276,10 +253,8 @@ class QueueService {
       params.append('messageGroupId', request.messageGroupId);
     }
 
-    const response: AxiosResponse<ApiResponse<ReceiveMessageResponse>> = await axios.get(
-      `${API_BASE_URL}/api/v1/queues/${encodeURIComponent(queueName)}/messages?${params.toString()}`,
-      { headers: this.getHeaders() }
-    );
+    const response: AxiosResponse<ApiResponse<ReceiveMessageResponse>> = await apiClient.get(
+      `/api/v1/queues/${encodeURIComponent(queueName)}/messages?${params.toString()}`    );
     
     if (!response.data.success) {
       throw new Error(response.data.error?.message || 'Failed to receive messages');
@@ -292,10 +267,8 @@ class QueueService {
    * 메시지 미리보기 (큐에서 제거하지 않음)
    */
   async peekMessages(queueName: string, maxMessages: number = 10): Promise<PeekMessageResponse> {
-    const response: AxiosResponse<ApiResponse<PeekMessageResponse>> = await axios.get(
-      `${API_BASE_URL}/api/v1/queues/${encodeURIComponent(queueName)}/messages/peek?maxMessages=${maxMessages}`,
-      { headers: this.getHeaders() }
-    );
+    const response: AxiosResponse<ApiResponse<PeekMessageResponse>> = await apiClient.get(
+      `/api/v1/queues/${encodeURIComponent(queueName)}/messages/peek?maxMessages=${maxMessages}`    );
     
     if (!response.data.success) {
       throw new Error(response.data.error?.message || 'Failed to peek messages');
@@ -308,10 +281,8 @@ class QueueService {
    * 메시지 삭제
    */
   async deleteMessage(queueName: string, receiptHandle: string): Promise<string> {
-    const response: AxiosResponse<ApiResponse<string>> = await axios.delete(
-      `${API_BASE_URL}/api/v1/queues/${encodeURIComponent(queueName)}/messages/${encodeURIComponent(receiptHandle)}`,
-      { headers: this.getHeaders() }
-    );
+    const response: AxiosResponse<ApiResponse<string>> = await apiClient.delete(
+      `/api/v1/queues/${encodeURIComponent(queueName)}/messages/${encodeURIComponent(receiptHandle)}`    );
     
     if (!response.data.success) {
       throw new Error(response.data.error?.message || 'Failed to delete message');
@@ -324,10 +295,8 @@ class QueueService {
    * 큐 비우기 (모든 메시지 삭제)
    */
   async purgeQueue(queueName: string): Promise<string> {
-    const response: AxiosResponse<ApiResponse<string>> = await axios.delete(
-      `${API_BASE_URL}/api/v1/queues/${encodeURIComponent(queueName)}/messages`,
-      { headers: this.getHeaders() }
-    );
+    const response: AxiosResponse<ApiResponse<string>> = await apiClient.delete(
+      `/api/v1/queues/${encodeURIComponent(queueName)}/messages`    );
     
     if (!response.data.success) {
       throw new Error(response.data.error?.message || 'Failed to purge queue');

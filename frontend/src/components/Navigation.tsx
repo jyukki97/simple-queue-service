@@ -1,8 +1,8 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import './Navigation.css';
 
-const Navigation: React.FC = () => {
+const Navigation: React.FC = memo(() => {
   const location = useLocation();
 
   const isActive = (path: string) => {
@@ -60,6 +60,8 @@ const Navigation: React.FC = () => {
       </div>
     </nav>
   );
-};
+});
+
+Navigation.displayName = 'Navigation';
 
 export default Navigation;

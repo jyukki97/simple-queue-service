@@ -1,0 +1,158 @@
+.message-item {
+  border: 1px solid #e1e5e9;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 12px;
+  background: white;
+  transition: all 0.2s ease;
+}
+
+.message-item:hover {
+  border-color: #007bff;
+  box-shadow: 0 2px 8px rgba(0, 123, 255, 0.1);
+}
+
+.message-item.selected {
+  border-color: #007bff;
+  background-color: #f8f9ff;
+  box-shadow: 0 2px 8px rgba(0, 123, 255, 0.15);
+}
+
+.message-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.message-checkbox {
+  margin: 0;
+  cursor: pointer;
+}
+
+.message-id {
+  font-family: 'Monaco', monospace;
+  font-size: 13px;
+  color: #495057;
+  background: #f8f9fa;
+  padding: 4px 8px;
+  border-radius: 4px;
+  flex: 1;
+  min-width: 200px;
+}
+
+.message-timestamp {
+  color: #6c757d;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.message-body {
+  margin-bottom: 12px;
+}
+
+.message-content {
+  background: #f8f9fa;
+  padding: 12px;
+  border-radius: 4px;
+  font-family: 'Monaco', monospace;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #495057;
+  word-break: break-word;
+}
+
+.message-attributes {
+  margin-bottom: 12px;
+}
+
+.message-attributes strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #495057;
+  font-size: 13px;
+}
+
+.attributes-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.attribute-tag {
+  background: #e9ecef;
+  color: #495057;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: 'Monaco', monospace;
+}
+
+.message-stats {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: #6c757d;
+}
+
+.receive-count {
+  background: #fff3cd;
+  color: #856404;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.first-receive {
+  background: #d1ecf1;
+  color: #0c5460;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.message-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.delete-button {
+  background: #dc3545;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background-color 0.2s ease;
+}
+
+.delete-button:hover {
+  background: #c82333;
+}
+
+.delete-button:active {
+  transform: translateY(1px);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .message-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  
+  .message-id {
+    min-width: unset;
+    width: 100%;
+  }
+  
+  .message-stats {
+    flex-direction: column;
+    gap: 4px;
+    align-items: flex-start;
+  }
+}

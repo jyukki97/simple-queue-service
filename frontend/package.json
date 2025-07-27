@@ -23,13 +23,21 @@
     "web-vitals": "^2.1.4"
   },
   "devDependencies": {
-    "webpack-bundle-analyzer": "^4.10.1"
+    "webpack-bundle-analyzer": "^4.10.1",
+    "lighthouse": "^11.4.0",
+    "imagemin": "^8.0.1",
+    "imagemin-pngquant": "^9.0.2",
+    "imagemin-mozjpeg": "^10.0.0"
   },
   "scripts": {
     "start": "react-scripts start",
     "build": "GENERATE_SOURCEMAP=false react-scripts build",
     "build:analyze": "npm run build && npx webpack-bundle-analyzer build/static/js/*.js",
     "build:prod": "GENERATE_SOURCEMAP=false NODE_ENV=production react-scripts build",
+    "build:performance": "npm run build:prod && npm run analyze:bundle",
+    "analyze:bundle": "npx webpack-bundle-analyzer build/static/js/*.js --mode=static --report=bundle-report.html",
+    "analyze:lighthouse": "npx lighthouse http://localhost:3000 --output=html --output-path=lighthouse-report.html",
+    "optimize:images": "npx imagemin public/**/*.{png,jpg,jpeg,gif,svg} --out-dir=public/optimized",
     "test": "react-scripts test",
     "test:coverage": "react-scripts test --coverage --watchAll=false",
     "eject": "react-scripts eject"

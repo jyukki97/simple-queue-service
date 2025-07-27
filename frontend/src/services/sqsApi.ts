@@ -21,17 +21,48 @@ import {
   EnhancedMessageResponse,
   StorageTier,
 } from '../types/sqs';
+import configService from '../utils/config';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080';
-const API_KEY = 'test-api-key';
+const apiConfig = configService.getApiConfig();
 
 const api = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: apiConfig.baseUrl,
+  timeout: apiConfig.timeout,
   headers: {
     'Content-Type': 'application/json',
-    'X-API-Key': API_KEY,
+    'X-API-Key': apiConfig.key,
   },
 });
+
+// Export the configured api instance for use in other services
+export { api as apiClient };
+
+// Add request/response interceptors for centralized error handling
+api.interceptors.request.use(
+  (config) => {
+    if (configService.getUIConfig().debugMode) {
+      console.debug('API Request:', config.method?.toUpperCase(), config.url);
+    }
+    return config;
+  },
+  (error) => {
+    console.error('API Request Error:', error);
+    return Promise.reject(error);
+  }
+);
+
+api.interceptors.response.use(
+  (response) => {
+    if (configService.getUIConfig().debugMode) {
+      console.debug('API Response:', response.status, response.config.url);
+    }
+    return response;
+  },
+  (error) => {
+    console.error('API Response Error:', error.response?.status, error.response?.data);
+    return Promise.reject(error);
+  }
+);
 
 export const sqsApi = {
   // 큐 관리
