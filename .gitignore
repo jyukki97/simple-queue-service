@@ -46,3 +46,4 @@ bin/
 /sessions/
 .claude/
 /benchmark-results/
+*.log
